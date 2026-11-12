@@ -24,7 +24,6 @@
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert",
     "migration:show": "npm run typeorm -- migration:show",
-    "db:test": "bash src/db/test/run.sh",
     "migration:run:each": "tsx src/db/scripts/run-migrations.ts"
   },
   "dependencies": {

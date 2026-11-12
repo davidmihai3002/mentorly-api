@@ -1,6 +1,6 @@
 # Mentorly — Database schema (PostgreSQL)
 
-> **Generated** from the migrated database by `scripts/generate-schema-doc.py` — do not edit by hand; change a migration and regenerate.
+> Reference of the schema created by the migrations in `src/db/migrations/`. The migrations are the source of truth; update this file in the same PR whenever a migration changes the schema.
 
 **Conventions:** UUID v4 primary keys (`gen_random_uuid()`), statuses as `text` + `CHECK`, money as integer **bani** (RON × 100), all timestamps `timestamptz` (UTC), `updated_at` maintained by the `set_updated_at()` trigger, `snake_case` plural table names. Named constraints use the prefixes `uq_`, `ck_`, `ex_`, `ix_`; inline PKs/FKs keep PostgreSQL's default names (`<table>_pkey`, `<table>_<column>_fkey`). Allowed status values are listed in the Notes column.
 

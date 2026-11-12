@@ -27,8 +27,7 @@ src/db/
                                                           platform_testimonials, admin_audit_log
     1794441609000-SeedReferenceData.ts                    14 domains + 19 FAQ entries (all environments)
     1794441610000-SeedDemoData.ts                         demo world – skipped when NODE_ENV=production
-  scripts/generate-schema-doc.py                          regenerates docs/DB-SCHEMA.md from a live DB
-  test/                                                   up → constraint tests → down → up, against real Postgres
+  scripts/run-migrations.ts                               runs pending migrations one at a time (npm run migration:run:each)
 ```
 
 ## Requirements
