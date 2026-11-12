@@ -2,9 +2,6 @@
   <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
 </p>
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
-
   <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
     <p align="center">
 <a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
@@ -58,6 +55,29 @@ $ npm run test:e2e
 $ npm run test:cov
 ```
 
+## Database migrations
+
+Set `DATABASE_URL` in `.env` first. Connection settings, secrets and environment variables are explained in [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
+
+Run the migrations **one at a time**, in timestamp order. Each one runs in its own transaction with its own log line, and the script stops at the first failure:
+
+```bash
+# run every pending migration individually
+$ npm run migration:run:each
+
+# show which migrations are applied / pending (runs nothing)
+$ npm run migration:run:each -- --list
+
+# run a single migration by class name or timestamp (refuses to skip earlier pending ones)
+$ npm run migration:run:each -- --only CreateSessions
+$ npm run migration:run:each -- --only 1794441604000
+
+# or call the script directly
+$ ./src/db/scripts/run-migrations.ts --list
+```
+
+Standard TypeORM CLI: `npm run migration:run`, `npm run migration:revert`, `npm run migration:show`. More in [docs/DATABASE.md](docs/DATABASE.md).
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
@@ -92,7 +112,7 @@ To add it to this project, run this and approve the code it prints at [observe.n
 $ npx @nestjs/observe link
 ```
 
-It installs `@nestjs/observe`, wires it into `AppModule` and `main.ts`, and writes the app key and secret into `.env`, which every `nest start` script (`start`, `start:dev`, `start:debug`) then loads. In production, set `OBSERVE_APP_KEY` and `OBSERVE_APP_SECRET` in the environment instead.
+It installs `@nestjs/observe`, wires it into `AppModule` and `main.ts`, and writes the app key and secret into `.env`, which every `nest start` script (`start`, `start:dev`, `start:debug`) then loads. How to handle these keys: [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
 
 Or do it by hand:
 
