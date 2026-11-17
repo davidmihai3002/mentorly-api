@@ -19,5 +19,6 @@ export const typeOrmOptions: DataSourceOptions = {
   migrationsTableName: 'typeorm_migrations',
   migrationsTransactionMode: 'each',
   synchronize: false,
+  installExtensions: false,
   logging: ['error', 'migration'],
 };
