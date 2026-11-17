@@ -1,6 +1,6 @@
 import type { UserRole } from '../../users/index.js';
 
-export interface RegisterResponseDto {
+export interface UserResponseDto {
   id: string;
   email: string;
   role: UserRole;
