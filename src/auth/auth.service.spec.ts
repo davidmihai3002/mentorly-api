@@ -1,10 +1,14 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
-import { compare, getRounds } from 'bcryptjs';
-import { DataSource } from 'typeorm';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { compare, getRounds, hashSync } from 'bcryptjs';
+import { DataSource, IsNull, type Repository } from 'typeorm';
 import { MenteeProfile, USER_ROLE, User } from '../users/index.js';
 import { AuthService } from './auth.service.js';
-import type { RegisterDto } from './dto/index.js';
+import type { LoginDto, RegisterDto } from './dto/index.js';
+
+vi.mock(import('bcryptjs'), { spy: true });
 
 const NEW_USER_ID = '6f1c2a4e-8b3d-4f5a-9c7e-1d2b3a4c5e6f';
 const SIGN_UP_TIME = new Date('2026-11-12T09:30:00.000Z');
@@ -18,6 +22,39 @@ const signUp = {
   birthDate: '2001-03-15',
   hasAcceptedTerms: true,
 } satisfies RegisterDto;
+
+const USER_ID = '0b7d9e2f-3c4a-4e5b-8f6a-7c8d9e0f1a2b';
+const ANA_PASSWORD = 'parola123';
+const ANA_PASSWORD_HASH = hashSync(ANA_PASSWORD, 10);
+const INVALID_CREDENTIALS = new UnauthorizedException(
+  'Invalid email or password.',
+);
+const BCRYPT_COST_10_HASH = /^\$2[aby]\$10\$[./A-Za-z0-9]{53}$/;
+const TEST_JWT_SECRET = 'unit-test-only-fake-jwt-secret-not-for-real-use';
+const OTHER_JWT_SECRET = 'another-unit-test-only-fake-jwt-secret-value';
+const TEST_TOKEN_LIFETIME_SECONDS = 60;
+const MILLISECONDS_PER_SECOND = 1000;
+
+const credentials = {
+  email: 'ana.pop@example.com',
+  password: ANA_PASSWORD,
+} satisfies LoginDto;
+
+const buildUser = (changes: Partial<User> = {}): User =>
+  Object.assign(new User(), {
+    id: USER_ID,
+    email: 'ana.pop@example.com',
+    passwordHash: ANA_PASSWORD_HASH,
+    role: USER_ROLE.MENTOR,
+    firstName: 'Ana',
+    lastName: 'Pop',
+    birthDate: '2001-03-15',
+    termsAcceptedAt: SIGN_UP_TIME,
+    tokenVersion: 4,
+    lastLoginAt: null,
+    deletedAt: null,
+    ...changes,
+  });
 
 describe('AuthService', () => {
   const insertUser = vi.fn((user: User) =>
@@ -45,13 +82,32 @@ describe('AuthService', () => {
       (work: (entityManager: typeof manager) => Promise<User>) => work(manager),
     ),
   };
+  const injectedUsersRepository = {
+    findOneBy: vi.fn<Repository<User>['findOneBy']>(),
+    update: vi.fn<Repository<User>['update']>(),
+    increment: vi.fn<Repository<User>['increment']>(),
+  };
+  const jwtService = new JwtService({
+    secret: TEST_JWT_SECRET,
+    signOptions: { algorithm: 'HS256', expiresIn: TEST_TOKEN_LIFETIME_SECONDS },
+    verifyOptions: { algorithms: ['HS256'] },
+  });
+  const signAsync = vi.spyOn(jwtService, 'signAsync');
   let authService: AuthService;
 
   beforeEach(async () => {
     vi.resetAllMocks();
     vi.setSystemTime(SIGN_UP_TIME);
     const testingModule = await Test.createTestingModule({
-      providers: [AuthService, { provide: DataSource, useValue: dataSource }],
+      providers: [
+        AuthService,
+        { provide: DataSource, useValue: dataSource },
+        {
+          provide: getRepositoryToken(User),
+          useValue: injectedUsersRepository,
+        },
+        { provide: JwtService, useValue: jwtService },
+      ],
     }).compile();
 
     authService = testingModule.get(AuthService);
@@ -97,4 +153,160 @@ describe('AuthService', () => {
       expect(profilesRepository.insert.mock.calls).toEqual(profileInserts);
     },
   );
+
+  describe('login', () => {
+    it.each([
+      ['an unknown or deleted email', null, ANA_PASSWORD],
+      ['a wrong password', buildUser(), 'parola124'],
+      [
+        'a Google-only account',
+        buildUser({ passwordHash: null }),
+        ANA_PASSWORD,
+      ],
+    ])(
+      'rejects a login with %s with the generic 401, looking up only accounts without deleted_at',
+      async (_case, storedUser, password) => {
+        injectedUsersRepository.findOneBy.mockResolvedValue(storedUser);
+
+        await expect(
+          authService.login({ ...credentials, password }),
+        ).rejects.toThrow(INVALID_CREDENTIALS);
+        expect(compare).toHaveBeenCalledOnce();
+        expect(injectedUsersRepository.update).not.toHaveBeenCalled();
+        expect(injectedUsersRepository.findOneBy.mock.calls).toStrictEqual([
+          [{ email: 'ana.pop@example.com', deletedAt: IsNull() }],
+        ]);
+      },
+    );
+
+    it('rejects a Google-only account even when the compare matches', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValue(
+        buildUser({ passwordHash: null }),
+      );
+      vi.mocked(compare).mockImplementationOnce(async () => true);
+
+      await expect(authService.login(credentials)).rejects.toThrow(
+        INVALID_CREDENTIALS,
+      );
+    });
+
+    it('compares the password against the same cost-10 dummy hash for an unknown email and a Google-only account', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValueOnce(null);
+      injectedUsersRepository.findOneBy.mockResolvedValueOnce(
+        buildUser({ passwordHash: null }),
+      );
+
+      await expect(authService.login(credentials)).rejects.toThrow();
+      await expect(authService.login(credentials)).rejects.toThrow();
+      const [unknownEmailCall, googleOnlyCall] = vi.mocked(compare).mock.calls;
+      expect(unknownEmailCall).toStrictEqual(googleOnlyCall);
+      expect(unknownEmailCall).toStrictEqual([
+        ANA_PASSWORD,
+        expect.stringMatching(BCRYPT_COST_10_HASH),
+      ]);
+    });
+
+    it('logs in with the right password, sets last_login_at and returns the public user fields with a token signed with only the id and token version', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValue(buildUser());
+
+      const loginResponse = await authService.login(credentials);
+
+      expect(loginResponse).toStrictEqual({
+        accessToken: await signAsync.mock.results[0].value,
+        user: {
+          id: USER_ID,
+          email: 'ana.pop@example.com',
+          role: USER_ROLE.MENTOR,
+          firstName: 'Ana',
+          lastName: 'Pop',
+        },
+      });
+      expect(compare).toHaveBeenCalledExactlyOnceWith(
+        ANA_PASSWORD,
+        ANA_PASSWORD_HASH,
+      );
+      expect(injectedUsersRepository.update.mock.calls).toEqual([
+        [{ id: USER_ID }, { lastLoginAt: SIGN_UP_TIME }],
+      ]);
+      expect(signAsync.mock.calls).toStrictEqual([
+        [{ sub: USER_ID, tokenVersion: 4 }],
+      ]);
+    });
+  });
+
+  describe('authenticate', () => {
+    const signAccessToken = (tokenVersion = 4): Promise<string> =>
+      jwtService.signAsync({ sub: USER_ID, tokenVersion });
+    const signExpiredAccessToken = async (): Promise<string> => {
+      const accessToken = await signAccessToken();
+      const lifetimeMilliseconds =
+        (TEST_TOKEN_LIFETIME_SECONDS + 1) * MILLISECONDS_PER_SECOND;
+      vi.setSystemTime(SIGN_UP_TIME.getTime() + lifetimeMilliseconds);
+      return accessToken;
+    };
+
+    it.each([
+      [
+        'signed with another secret',
+        () =>
+          new JwtService({ secret: OTHER_JWT_SECRET }).signAsync({
+            sub: USER_ID,
+            tokenVersion: 4,
+          }),
+      ],
+      ['that is not a JWT', () => Promise.resolve('not-a-jwt')],
+      ['that has expired', signExpiredAccessToken],
+    ])(
+      'rejects a token %s with 401, without loading the user',
+      async (_case, createToken) => {
+        const accessToken = await createToken();
+
+        await expect(authService.authenticate(accessToken)).rejects.toThrow(
+          new UnauthorizedException(),
+        );
+        expect(injectedUsersRepository.findOneBy).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects a token of an unknown or deleted user with 401 by looking up only users without deleted_at', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        authService.authenticate(await signAccessToken()),
+      ).rejects.toThrow(new UnauthorizedException());
+      expect(injectedUsersRepository.findOneBy.mock.calls).toStrictEqual([
+        [{ id: USER_ID, deletedAt: IsNull() }],
+      ]);
+    });
+
+    it('rejects a token with an old token version with 401', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValue(
+        buildUser({ tokenVersion: 5 }),
+      );
+
+      await expect(
+        authService.authenticate(await signAccessToken(4)),
+      ).rejects.toThrow(new UnauthorizedException());
+    });
+
+    it('returns the id and the role from the database for a valid token', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValue(
+        buildUser({ role: USER_ROLE.MENTEE }),
+      );
+
+      await expect(
+        authService.authenticate(await signAccessToken()),
+      ).resolves.toStrictEqual({ id: USER_ID, role: USER_ROLE.MENTEE });
+    });
+  });
+
+  describe('logout', () => {
+    it('logs the user out on every device by bumping token_version in one atomic update', async () => {
+      await authService.logout(USER_ID);
+
+      expect(injectedUsersRepository.increment.mock.calls).toStrictEqual([
+        [{ id: USER_ID }, 'tokenVersion', 1],
+      ]);
+    });
+  });
 });

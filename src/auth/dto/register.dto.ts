@@ -10,6 +10,7 @@ import {
   ValidateBy,
 } from 'class-validator';
 import { USER_ROLE, type UserRole } from '../../users/index.js';
+import { toNormalizedEmail } from '../utils/index.js';
 
 const PASSWORD_MIN_LENGTH = 8;
 const BCRYPT_MAX_PASSWORD_BYTES = 72;
@@ -21,9 +22,6 @@ const NAME_MESSAGE =
 
 const trimText = ({ value }: TransformFnParams): unknown =>
   typeof value === 'string' ? value.trim() : value;
-
-const toNormalizedEmail = ({ value }: TransformFnParams): unknown =>
-  typeof value === 'string' ? value.trim().toLowerCase().normalize() : value;
 
 const isPastDate = (value: unknown): boolean => {
   const [today] = new Date().toISOString().split('T');

@@ -23,6 +23,7 @@ contains the real values.
 | Variable | Used by | Required | Notes |
 |---|---|---|---|
 | `DATABASE_URL` | app, TypeORM CLI, migration script | yes | PostgreSQL connection string, see below |
+| `JWT_SECRET` | auth module | yes | signs and verifies access tokens; at least 32 characters, generate with `openssl rand -base64 48` |
 | `NODE_ENV` | `SeedDemoData` migration | no | `production` skips the demo users and demo content |
 | `PORT` | `src/main.ts` | no | HTTP port, default `3000` |
 | `OBSERVE_APP_KEY`, `OBSERVE_APP_SECRET` | NestJS Observe (once installed) | no | written to `.env` by `npx @nestjs/observe link`; in production set them in the host's environment |

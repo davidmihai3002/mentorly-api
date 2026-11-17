@@ -29,4 +29,13 @@ export class User {
 
   @Column({ name: 'terms_accepted_at', type: 'timestamptz', nullable: false })
   termsAcceptedAt: Date;
+
+  @Column({ name: 'token_version', type: 'integer', nullable: false })
+  tokenVersion: number;
+
+  @Column({ name: 'last_login_at', type: 'timestamptz', nullable: true })
+  lastLoginAt: Date | null;
+
+  @Column({ name: 'deleted_at', type: 'timestamptz', nullable: true })
+  deletedAt: Date | null;
 }
