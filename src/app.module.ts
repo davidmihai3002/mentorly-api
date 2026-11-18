@@ -9,6 +9,7 @@ import {
   createValidationPipe,
 } from './common/index.js';
 import { typeOrmOptions } from './db/typeorm.config.js';
+import { FaqModule } from './faq/index.js';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { typeOrmOptions } from './db/typeorm.config.js';
       }),
     }),
     AuthModule,
+    FaqModule,
   ],
   controllers: [AppController],
   providers: [
