@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -15,10 +16,15 @@ import type {
   RegisterDto,
   UserResponseDto,
 } from './dto/index.js';
-import { toUserResponse } from './utils/index.js';
+import {
+  MINIMUM_SIGN_UP_AGE,
+  isOldEnoughToSignUp,
+  toUserResponse,
+} from './utils/index.js';
 
 const BCRYPT_SALT_ROUNDS = 10;
 const EMAIL_TAKEN_MESSAGE = 'An account with this email already exists.';
+const UNDER_MINIMUM_AGE_MESSAGE = `You must be at least ${MINIMUM_SIGN_UP_AGE} years old to create an account.`;
 const INVALID_CREDENTIALS_MESSAGE = 'Invalid email or password.';
 const DUMMY_PASSWORD_HASH =
   '$2b$10$Ei5TpbJPQPNKf3I9WtJaEe89OhfsJDxHh8NEZWHbZ98ww2.M3vh4W';
@@ -38,6 +44,12 @@ export class AuthService {
   ) {}
 
   async register(signUp: RegisterDto): Promise<UserResponseDto> {
+    const today = new Date();
+    const isOldEnough = isOldEnoughToSignUp(signUp.birthDate, today);
+    if (!isOldEnough) {
+      throw new ForbiddenException(UNDER_MINIMUM_AGE_MESSAGE);
+    }
+
     const passwordHash = await hash(signUp.password, BCRYPT_SALT_ROUNDS);
     const termsAcceptedAt = new Date();
     const createdUser = await this.dataSource.transaction(async (manager) => {

@@ -1,8 +1,12 @@
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { compare, getRounds, hashSync } from 'bcryptjs';
+import { compare, getRounds, hash, hashSync } from 'bcryptjs';
 import { DataSource, IsNull, type Repository } from 'typeorm';
 import { MenteeProfile, USER_ROLE, User } from '../users/index.js';
 import { AuthService } from './auth.service.js';
@@ -12,6 +16,11 @@ vi.mock(import('bcryptjs'), { spy: true });
 
 const NEW_USER_ID = '6f1c2a4e-8b3d-4f5a-9c7e-1d2b3a4c5e6f';
 const SIGN_UP_TIME = new Date('2026-11-12T09:30:00.000Z');
+const TURNS_16_ON_SIGN_UP_DAY = '2010-11-12';
+const TURNS_16_DAY_AFTER_SIGN_UP = '2010-11-13';
+const UNDER_MINIMUM_AGE_ERROR = new ForbiddenException(
+  'You must be at least 16 years old to create an account.',
+);
 
 const signUp = {
   role: USER_ROLE.MENTEE,
@@ -120,6 +129,33 @@ describe('AuthService', () => {
       new ConflictException('An account with this email already exists.'),
     );
     expect(profilesRepository.insert).not.toHaveBeenCalled();
+  });
+
+  it.each([{ role: USER_ROLE.MENTEE }, { role: USER_ROLE.MENTOR }])(
+    'rejects a $role sign-up with 403 when the user turns 16 tomorrow, without hashing the password or opening a transaction',
+    async ({ role }) => {
+      const underageSignUp = {
+        ...signUp,
+        role,
+        birthDate: TURNS_16_DAY_AFTER_SIGN_UP,
+      };
+
+      await expect(authService.register(underageSignUp)).rejects.toThrow(
+        UNDER_MINIMUM_AGE_ERROR,
+      );
+      expect(hash).not.toHaveBeenCalled();
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it('signs up a user who turns 16 on the sign-up day', async () => {
+    const registerResponse = await authService.register({
+      ...signUp,
+      birthDate: TURNS_16_ON_SIGN_UP_DAY,
+    });
+
+    expect(registerResponse.id).toBe(NEW_USER_ID);
+    expect(dataSource.transaction).toHaveBeenCalledOnce();
   });
 
   it('stores a bcrypt hash of cost 10, the birth date and the terms acceptance time', async () => {
