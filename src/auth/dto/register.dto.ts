@@ -1,4 +1,4 @@
-import { Transform, type TransformFnParams } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
   Equals,
   IsByteLength,
@@ -9,6 +9,7 @@ import {
   MinLength,
   ValidateBy,
 } from 'class-validator';
+import { trimText } from '../../common/index.js';
 import { USER_ROLE, type UserRole } from '../../users/index.js';
 import { toNormalizedEmail } from '../utils/index.js';
 
@@ -19,9 +20,6 @@ const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const FILLED_WITHOUT_CONTROL_CHARACTERS = /^\P{Cc}+$/u;
 const NAME_MESSAGE =
   '$property must be non-empty text without control characters';
-
-const trimText = ({ value }: TransformFnParams): unknown =>
-  typeof value === 'string' ? value.trim() : value;
 
 const isPastDate = (value: unknown): boolean => {
   const [today] = new Date().toISOString().split('T');
