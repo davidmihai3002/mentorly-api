@@ -9,7 +9,9 @@ import {
   createValidationPipe,
 } from './common/index.js';
 import { typeOrmOptions } from './db/typeorm.config.js';
+import { DomainsModule } from './domains/index.js';
 import { FaqModule } from './faq/index.js';
+import { MenteeProfilesModule } from './mentee-profiles/index.js';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { FaqModule } from './faq/index.js';
     }),
     AuthModule,
     FaqModule,
+    DomainsModule,
+    MenteeProfilesModule,
   ],
   controllers: [AppController],
   providers: [
