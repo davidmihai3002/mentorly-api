@@ -27,6 +27,9 @@ export class User {
   @Column({ name: 'birth_date', type: 'date', nullable: false })
   birthDate: string;
 
+  @Column({ name: 'avatar_file_id', type: 'uuid', nullable: true })
+  avatarFileId: string | null;
+
   @Column({ name: 'terms_accepted_at', type: 'timestamptz', nullable: false })
   termsAcceptedAt: Date;
 

@@ -1,4 +1,5 @@
 import {
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -28,6 +29,8 @@ const STORAGE_KEY_UNDER_USER = new RegExp(
 );
 const SIGNED_UPLOAD_URL =
   'https://storage.example.com/mentorly-uploads/signed-upload';
+const SIGNED_DOWNLOAD_URL =
+  'https://storage.example.com/mentorly-uploads/signed-download';
 
 const storageConfig = {
   endpoint: 'https://storage.example.com',
@@ -175,6 +178,26 @@ describe('FilesService', () => {
       await expect(filesService.hasUploadedObject(STORAGE_KEY)).rejects.toBe(
         storageError,
       );
+    });
+  });
+
+  describe('createDownloadUrl', () => {
+    it('signs a one-hour download of the object in the bucket', async () => {
+      getSignedUrlMock.mockResolvedValueOnce(SIGNED_DOWNLOAD_URL);
+
+      await expect(filesService.createDownloadUrl(STORAGE_KEY)).resolves.toBe(
+        SIGNED_DOWNLOAD_URL,
+      );
+      const [[, getObjectCommand]] = getSignedUrlMock.mock.calls;
+      expect(getSignedUrlMock).toHaveBeenCalledExactlyOnceWith(
+        s3Client,
+        expect.any(GetObjectCommand),
+        { expiresIn: 3600 },
+      );
+      expect(getObjectCommand.input).toStrictEqual({
+        Bucket: 'mentorly-uploads',
+        Key: STORAGE_KEY,
+      });
     });
   });
 });

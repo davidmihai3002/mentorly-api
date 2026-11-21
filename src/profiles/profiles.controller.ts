@@ -1,4 +1,13 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Put,
+  UseGuards,
+} from '@nestjs/common';
 import {
   CurrentUser,
   JwtAuthGuard,
@@ -9,7 +18,10 @@ import {
 import { USER_ROLE } from '../users/index.js';
 import {
   MentorApplicationDto,
+  MentorProfileDto,
+  MentorProfilePhotoDto,
   type MentorApplicationResponseDto,
+  type MentorProfileResponseDto,
 } from './dto/index.js';
 import { ProfilesService } from './profiles.service.js';
 
@@ -30,5 +42,33 @@ export class ProfilesController {
         application,
       );
     return submittedApplication;
+  }
+
+  @Get()
+  async getMentorProfile(
+    @CurrentUser() currentUser: AuthenticatedUser,
+  ): Promise<MentorProfileResponseDto> {
+    const mentorProfile = await this.profilesService.getMentorProfile(
+      currentUser.id,
+    );
+    return mentorProfile;
+  }
+
+  @Put()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async saveMentorProfile(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Body() mentorProfile: MentorProfileDto,
+  ): Promise<void> {
+    await this.profilesService.saveMentorProfile(currentUser.id, mentorProfile);
+  }
+
+  @Put('photo')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async setMentorPhoto(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Body() photo: MentorProfilePhotoDto,
+  ): Promise<void> {
+    await this.profilesService.setMentorPhoto(currentUser.id, photo.fileId);
   }
 }
