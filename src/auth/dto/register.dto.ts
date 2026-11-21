@@ -9,7 +9,11 @@ import {
   MinLength,
   ValidateBy,
 } from 'class-validator';
-import { trimText } from '../../common/index.js';
+import {
+  SINGLE_LINE_TEXT_MESSAGE,
+  SINGLE_LINE_TEXT_PATTERN,
+  trimText,
+} from '../../common/index.js';
 import { USER_ROLE, type UserRole } from '../../users/index.js';
 import { toNormalizedEmail } from '../utils/index.js';
 
@@ -17,9 +21,6 @@ const PASSWORD_MIN_LENGTH = 8;
 const BCRYPT_MAX_PASSWORD_BYTES = 72;
 const CONTAINS_LETTER_AND_DIGIT = /^(?=.*\p{L})(?=.*\d)/su;
 const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-const FILLED_WITHOUT_CONTROL_CHARACTERS = /^\P{Cc}+$/u;
-const NAME_MESSAGE =
-  '$property must be non-empty text without control characters';
 
 const isPastDate = (value: unknown): boolean => {
   const [today] = new Date().toISOString().split('T');
@@ -32,11 +33,11 @@ export class RegisterDto {
   role: UserRole;
 
   @Transform(trimText)
-  @Matches(FILLED_WITHOUT_CONTROL_CHARACTERS, { message: NAME_MESSAGE })
+  @Matches(SINGLE_LINE_TEXT_PATTERN, { message: SINGLE_LINE_TEXT_MESSAGE })
   firstName: string;
 
   @Transform(trimText)
-  @Matches(FILLED_WITHOUT_CONTROL_CHARACTERS, { message: NAME_MESSAGE })
+  @Matches(SINGLE_LINE_TEXT_PATTERN, { message: SINGLE_LINE_TEXT_MESSAGE })
   lastName: string;
 
   @Transform(toNormalizedEmail)
