@@ -33,6 +33,7 @@ const signUp = {
 } satisfies RegisterDto;
 
 const USER_ID = '0b7d9e2f-3c4a-4e5b-8f6a-7c8d9e0f1a2b';
+const AVATAR_FILE_ID = '9d3f5b7a-2c4e-4a6b-8d0f-1e3a5c7b9d2f';
 const ANA_PASSWORD = 'parola123';
 const ANA_PASSWORD_HASH = hashSync(ANA_PASSWORD, 10);
 const INVALID_CREDENTIALS = new UnauthorizedException(
@@ -58,6 +59,7 @@ const buildUser = (changes: Partial<User> = {}): User =>
     firstName: 'Ana',
     lastName: 'Pop',
     birthDate: '2001-03-15',
+    avatarFileId: null,
     termsAcceptedAt: SIGN_UP_TIME,
     tokenVersion: 4,
     lastLoginAt: null,
@@ -343,6 +345,40 @@ describe('AuthService', () => {
       expect(injectedUsersRepository.increment.mock.calls).toStrictEqual([
         [{ id: USER_ID }, 'tokenVersion', 1],
       ]);
+    });
+  });
+
+  describe('setAvatar', () => {
+    it('updates only the avatar_file_id of that user', async () => {
+      await authService.setAvatar(USER_ID, AVATAR_FILE_ID);
+
+      expect(injectedUsersRepository.update.mock.calls).toStrictEqual([
+        [{ id: USER_ID }, { avatarFileId: AVATAR_FILE_ID }],
+      ]);
+    });
+  });
+
+  describe('findAvatarFileId', () => {
+    it('returns the avatar file id of that user', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValueOnce(
+        buildUser({ avatarFileId: AVATAR_FILE_ID }),
+      );
+
+      await expect(authService.findAvatarFileId(USER_ID)).resolves.toBe(
+        AVATAR_FILE_ID,
+      );
+      expect(injectedUsersRepository.findOneBy).toHaveBeenCalledExactlyOnceWith(
+        { id: USER_ID },
+      );
+    });
+
+    it.each([
+      ['a user without an avatar', buildUser()],
+      ['an unknown user', null],
+    ])('returns null for %s', async (_case, user) => {
+      injectedUsersRepository.findOneBy.mockResolvedValueOnce(user);
+
+      await expect(authService.findAvatarFileId(USER_ID)).resolves.toBeNull();
     });
   });
 });
