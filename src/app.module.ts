@@ -11,7 +11,9 @@ import {
 import { typeOrmOptions } from './db/typeorm.config.js';
 import { DomainsModule } from './domains/index.js';
 import { FaqModule } from './faq/index.js';
+import { FilesModule } from './files/index.js';
 import { MenteeProfilesModule } from './mentee-profiles/index.js';
+import { ProfilesModule } from './profiles/index.js';
 import { TestimonialsModule } from './testimonials/index.js';
 
 @Module({
@@ -28,6 +30,8 @@ import { TestimonialsModule } from './testimonials/index.js';
     DomainsModule,
     MenteeProfilesModule,
     TestimonialsModule,
+    FilesModule,
+    ProfilesModule,
   ],
   controllers: [AppController],
   providers: [

@@ -24,6 +24,10 @@ contains the real values.
 |---|---|---|---|
 | `DATABASE_URL` | app, TypeORM CLI, migration script | yes | PostgreSQL connection string, see below |
 | `JWT_SECRET` | auth module | yes | signs and verifies access tokens; at least 32 characters, generate with `openssl rand -base64 48` |
+| `S3_ENDPOINT` | files module | yes | URL of the S3-compatible object storage API, e.g. `https://<account>.r2.cloudflarestorage.com` |
+| `S3_REGION` | files module | yes | region of the bucket; providers without regions accept `auto` or `us-east-1` |
+| `S3_BUCKET` | files module | yes | bucket that stores uploads (CVs, certificates, diplomas) |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | files module | yes | key pair with `s3:PutObject`, `s3:GetObject` and `s3:ListBucket` on the bucket; without `s3:ListBucket` a missing file answers 403 instead of 404 and the application check fails with a 500 |
 | `NODE_ENV` | `SeedDemoData` migration | no | `production` skips the demo users and demo content |
 | `PORT` | `src/main.ts` | no | HTTP port, default `3000` |
 | `OBSERVE_APP_KEY`, `OBSERVE_APP_SECRET` | NestJS Observe (once installed) | no | written to `.env` by `npx @nestjs/observe link`; in production set them in the host's environment |
