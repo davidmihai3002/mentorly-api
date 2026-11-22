@@ -12,7 +12,9 @@ export const migrationsGlob = join(
   `*.${ext}`,
 );
 
-export const typeOrmOptions: DataSourceOptions = {
+type PostgresOptions = Extract<DataSourceOptions, { type: 'postgres' }>;
+
+export const typeOrmOptions: PostgresOptions = {
   type: 'postgres',
   url: process.env.DATABASE_URL,
   entities: [join(import.meta.dirname, '..', '**', `*.entity.${ext}`)],
@@ -21,4 +23,14 @@ export const typeOrmOptions: DataSourceOptions = {
   synchronize: false,
   installExtensions: false,
   logging: ['error', 'migration'],
+};
+
+/**
+ * Options for running migrations (TypeORM CLI + run-migrations script).
+ * Uses MIGRATIONS_URL (Neon direct, non-pooled host) when set: TypeORM migrations
+ * can misbehave through the PgBouncer pooler that DATABASE_URL points at.
+ */
+export const migrationOptions: PostgresOptions = {
+  ...typeOrmOptions,
+  url: process.env.MIGRATIONS_URL ?? process.env.DATABASE_URL,
 };

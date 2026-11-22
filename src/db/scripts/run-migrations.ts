@@ -4,7 +4,8 @@
  * gets its own DataSource, its own transaction and its own log line, and the script stops
  * at the first failure (earlier migrations stay applied).
  *
- * Uses the same options as the app and the CLI (typeorm.config.ts, DATABASE_URL from .env).
+ * Uses the same options as the CLI (migrationOptions in typeorm.config.ts: MIGRATIONS_URL from .env,
+ * falling back to DATABASE_URL).
  *
  *   npm run migration:run:each                         run every pending migration, one by one
  *   npm run migration:run:each -- --list               show applied / pending, run nothing
@@ -16,7 +17,7 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DataSource, type MigrationInterface } from 'typeorm';
-import { typeOrmOptions } from '../typeorm.config.js';
+import { migrationOptions } from '../typeorm.config.js';
 
 type MigrationClass = new () => MigrationInterface;
 interface MigrationFile {
@@ -27,7 +28,7 @@ interface MigrationFile {
 
 const ext = import.meta.filename.endsWith('.ts') ? '.ts' : '.js';
 const migrationsDir = join(import.meta.dirname, '..', 'migrations');
-const table = typeOrmOptions.migrationsTableName ?? 'migrations';
+const table = migrationOptions.migrationsTableName ?? 'migrations';
 
 function parseArgs(argv: string[]) {
   const args = { list: false, only: undefined as string | undefined };
@@ -59,7 +60,7 @@ async function loadMigrations(): Promise<MigrationFile[]> {
 }
 
 async function appliedMigrations(): Promise<Set<string>> {
-  const ds = new DataSource({ ...typeOrmOptions, logging: ['error'] });
+  const ds = new DataSource({ ...migrationOptions, logging: ['error'] });
   await ds.initialize();
   try {
     const [{ exists }] = (await ds.query(`SELECT to_regclass($1) IS NOT NULL AS exists`, [table])) as {
@@ -75,7 +76,7 @@ async function appliedMigrations(): Promise<Set<string>> {
 
 async function runOne(m: MigrationFile): Promise<void> {
   // A DataSource that only knows this one migration: runMigrations() applies exactly it.
-  const ds = new DataSource({ ...typeOrmOptions, migrations: [m.cls] });
+  const ds = new DataSource({ ...migrationOptions, migrations: [m.cls] });
   await ds.initialize();
   try {
     const ran = await ds.runMigrations({ transaction: 'each' });
@@ -87,7 +88,7 @@ async function runOne(m: MigrationFile): Promise<void> {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not set (put it in .env)');
+  if (!migrationOptions.url) throw new Error('MIGRATIONS_URL / DATABASE_URL is not set (put it in .env)');
 
   const all = await loadMigrations();
   const applied = await appliedMigrations();
