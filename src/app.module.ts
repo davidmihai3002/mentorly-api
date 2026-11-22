@@ -13,6 +13,7 @@ import { DomainsModule } from './domains/index.js';
 import { FaqModule } from './faq/index.js';
 import { FilesModule } from './files/index.js';
 import { MenteeProfilesModule } from './mentee-profiles/index.js';
+import { MentorshipsModule } from './mentorships/index.js';
 import { ProfilesModule } from './profiles/index.js';
 import { TestimonialsModule } from './testimonials/index.js';
 
@@ -32,6 +33,7 @@ import { TestimonialsModule } from './testimonials/index.js';
     TestimonialsModule,
     FilesModule,
     ProfilesModule,
+    MentorshipsModule,
   ],
   controllers: [AppController],
   providers: [
