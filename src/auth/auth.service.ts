@@ -126,6 +126,16 @@ export class AuthService {
     await this.usersRepository.increment({ id: userId }, 'tokenVersion', 1);
   }
 
+  async setAvatar(userId: string, fileId: string): Promise<void> {
+    await this.usersRepository.update({ id: userId }, { avatarFileId: fileId });
+  }
+
+  async findAvatarFileId(userId: string): Promise<string | null> {
+    const user = await this.usersRepository.findOneBy({ id: userId });
+    const avatarFileId = user?.avatarFileId ?? null;
+    return avatarFileId;
+  }
+
   private async verifyAccessToken(token: string): Promise<AccessTokenPayload> {
     try {
       const payload =
