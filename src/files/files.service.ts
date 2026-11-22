@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -15,6 +16,7 @@ import { FILE_VISIBILITY, StoredFile } from './entities/index.js';
 import { STORAGE_CONFIG } from './storage.providers.js';
 
 const UPLOAD_URL_EXPIRES_IN_SECONDS = 600;
+const DOWNLOAD_URL_EXPIRES_IN_SECONDS = 3600;
 
 @Injectable()
 export class FilesService {
@@ -84,5 +86,16 @@ export class FilesService {
       }
       throw error;
     }
+  }
+
+  async createDownloadUrl(storageKey: string): Promise<string> {
+    const getObjectCommand = new GetObjectCommand({
+      Bucket: this.storageConfig.bucket,
+      Key: storageKey,
+    });
+    const downloadUrl = await getSignedUrl(this.s3Client, getObjectCommand, {
+      expiresIn: DOWNLOAD_URL_EXPIRES_IN_SECONDS,
+    });
+    return downloadUrl;
   }
 }

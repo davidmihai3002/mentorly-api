@@ -1,25 +1,48 @@
 import { TransformationType, type TransformFnParams } from 'class-transformer';
-import { trimText } from './trim-text.util.js';
+import { trimText, trimTextItems } from './trim-text.util.js';
 
-const trimField = (value: unknown): unknown => {
+const applyTransform = (
+  transform: (params: TransformFnParams) => unknown,
+  value: unknown,
+): unknown => {
   const transformParams: TransformFnParams = {
     value,
-    key: 'needs',
-    obj: { needs: value },
+    key: 'field',
+    obj: { field: value },
     type: TransformationType.PLAIN_TO_CLASS,
     options: {},
   };
-  return trimText(transformParams);
+  return transform(transformParams);
 };
 
 describe('trimText', () => {
   it('removes the surrounding whitespace and keeps tabs and line breaks inside the text', () => {
-    expect(trimField(' \t\r\n First line\r\nSecond\tline \n ')).toBe(
-      'First line\r\nSecond\tline',
-    );
+    expect(
+      applyTransform(trimText, ' \t\r\n First line\r\nSecond\tline \n '),
+    ).toBe('First line\r\nSecond\tline');
   });
 
   it.each([42, undefined])('passes %s through unchanged', (value) => {
-    expect(trimField(value)).toBe(value);
+    expect(applyTransform(trimText, value)).toBe(value);
   });
+});
+
+describe('trimTextItems', () => {
+  it('trims every text item and passes other items through unchanged', () => {
+    expect(
+      applyTransform(trimTextItems, [
+        '  Senior engineer at Nordwave \t',
+        42,
+        ' \r\n ',
+        null,
+      ]),
+    ).toStrictEqual(['Senior engineer at Nordwave', 42, '', null]);
+  });
+
+  it.each(['  Nordwave  ', 42, undefined])(
+    'passes the non-list value %s through unchanged',
+    (value) => {
+      expect(applyTransform(trimTextItems, value)).toBe(value);
+    },
+  );
 });
