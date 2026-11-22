@@ -18,6 +18,7 @@ import {
 import { USER_ROLE } from '../users/index.js';
 import {
   MentorApplicationDto,
+  MentorCapacityDto,
   MentorProfileDto,
   MentorProfilePhotoDto,
   type MentorApplicationResponseDto,
@@ -70,5 +71,17 @@ export class ProfilesController {
     @Body() photo: MentorProfilePhotoDto,
   ): Promise<void> {
     await this.profilesService.setMentorPhoto(currentUser.id, photo.fileId);
+  }
+
+  @Put('capacity')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async setMentorCapacity(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Body() mentorCapacity: MentorCapacityDto,
+  ): Promise<void> {
+    await this.profilesService.setMentorCapacity(
+      currentUser.id,
+      mentorCapacity,
+    );
   }
 }

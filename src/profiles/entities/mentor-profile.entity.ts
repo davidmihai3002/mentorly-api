@@ -40,4 +40,7 @@ export class MentorProfile {
 
   @Column({ name: 'highlights', type: 'jsonb', nullable: false })
   highlights: MentorProfileHighlights;
+
+  @Column({ name: 'capacity', type: 'smallint', nullable: true })
+  capacity: number | null;
 }
