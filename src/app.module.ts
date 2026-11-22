@@ -15,6 +15,7 @@ import { FilesModule } from './files/index.js';
 import { MenteeProfilesModule } from './mentee-profiles/index.js';
 import { MentorshipsModule } from './mentorships/index.js';
 import { ProfilesModule } from './profiles/index.js';
+import { SearchModule } from './search/index.js';
 import { TestimonialsModule } from './testimonials/index.js';
 
 @Module({
@@ -34,6 +35,7 @@ import { TestimonialsModule } from './testimonials/index.js';
     FilesModule,
     ProfilesModule,
     MentorshipsModule,
+    SearchModule,
   ],
   controllers: [AppController],
   providers: [
