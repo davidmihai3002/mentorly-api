@@ -18,6 +18,7 @@ import {
 import { USER_ROLE } from '../users/index.js';
 import {
   MentorshipDetailsDto,
+  MentorshipPricesDto,
   type MentorshipResponseDto,
 } from './dto/index.js';
 import { MentorshipsService } from './mentorships.service.js';
@@ -47,6 +48,18 @@ export class MentorshipsController {
     await this.mentorshipsService.saveMentorshipDetails(
       currentUser.id,
       mentorshipDetails,
+    );
+  }
+
+  @Put('prices')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async saveMentorshipPrices(
+    @CurrentUser() currentUser: AuthenticatedUser,
+    @Body() mentorshipPrices: MentorshipPricesDto,
+  ): Promise<void> {
+    await this.mentorshipsService.saveMentorshipPrices(
+      currentUser.id,
+      mentorshipPrices,
     );
   }
 

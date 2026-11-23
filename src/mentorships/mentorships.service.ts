@@ -7,9 +7,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type {
   MentorshipDetailsDto,
+  MentorshipPricesDto,
   MentorshipResponseDto,
 } from './dto/index.js';
 import { AvailabilitySlot, Mentorship } from './entities/index.js';
+import { getMonthlyDiscountPercent } from './utils/index.js';
 
 const MENTORSHIP_NOT_FOUND_MESSAGE = 'Mentorship not found.';
 const MENTORSHIP_NOT_PUBLISHABLE_MESSAGE =
@@ -26,8 +28,30 @@ export class MentorshipsService {
 
   async getMentorship(mentorId: string): Promise<MentorshipResponseDto> {
     const mentorship = await this.findMentorship(mentorId);
-    const { description, conditions, minKnowledge, publishedAt } = mentorship;
-    return { description, conditions, minKnowledge, publishedAt };
+    const {
+      description,
+      conditions,
+      minKnowledge,
+      perSessionPriceBani,
+      monthlyPriceBani,
+      monthlySessionsCount,
+      publishedAt,
+    } = mentorship;
+    const monthlyDiscountPercent = getMonthlyDiscountPercent(
+      perSessionPriceBani,
+      monthlyPriceBani,
+      monthlySessionsCount,
+    );
+    return {
+      description,
+      conditions,
+      minKnowledge,
+      perSessionPriceBani,
+      monthlyPriceBani,
+      monthlySessionsCount,
+      monthlyDiscountPercent,
+      publishedAt,
+    };
   }
 
   async saveMentorshipDetails(
@@ -43,6 +67,25 @@ export class MentorshipsService {
       { mentorId, description, conditions, minKnowledge },
       { conflictPaths: ['mentorId'] },
     );
+  }
+
+  async saveMentorshipPrices(
+    mentorId: string,
+    mentorshipPrices: MentorshipPricesDto,
+  ): Promise<void> {
+    const {
+      perSessionPriceBani = null,
+      monthlyPriceBani = null,
+      monthlySessionsCount = null,
+    } = mentorshipPrices;
+    const updateResult = await this.mentorshipsRepository.update(
+      { mentorId },
+      { perSessionPriceBani, monthlyPriceBani, monthlySessionsCount },
+    );
+    const isMentorshipMissing = updateResult.affected === 0;
+    if (isMentorshipMissing) {
+      throw new NotFoundException(MENTORSHIP_NOT_FOUND_MESSAGE);
+    }
   }
 
   async publishMentorship(mentorId: string): Promise<void> {

@@ -26,6 +26,9 @@ export class Mentorship {
   @Column({ name: 'monthly_price_bani', type: 'integer', nullable: true })
   monthlyPriceBani: number | null;
 
+  @Column({ name: 'monthly_sessions_count', type: 'smallint', nullable: true })
+  monthlySessionsCount: number | null;
+
   @Column({ name: 'published_at', type: 'timestamptz', nullable: true })
   publishedAt: Date | null;
 }

@@ -28,6 +28,7 @@ const buildMentorship = (changes: Partial<Mentorship> = {}): Mentorship =>
     isSponsored: false,
     perSessionPriceBani: 15000,
     monthlyPriceBani: null,
+    monthlySessionsCount: null,
     publishedAt: null,
     ...changes,
   });
@@ -66,15 +67,23 @@ describe('MentorshipsService', () => {
   });
 
   describe('getMentorship', () => {
-    it('returns the description, conditions, minimum knowledge and publish date of the current mentor', async () => {
+    it('returns the details, prices, monthly discount and publish date of the current mentor', async () => {
       mentorshipsRepository.findOneBy.mockResolvedValueOnce(
-        buildMentorship({ publishedAt: PUBLISHED_AT }),
+        buildMentorship({
+          monthlyPriceBani: 50000,
+          monthlySessionsCount: 4,
+          publishedAt: PUBLISHED_AT,
+        }),
       );
 
       await expect(
         mentorshipsService.getMentorship(MENTOR_ID),
       ).resolves.toStrictEqual({
         ...mentorshipDetails,
+        perSessionPriceBani: 15000,
+        monthlyPriceBani: 50000,
+        monthlySessionsCount: 4,
+        monthlyDiscountPercent: 17,
         publishedAt: PUBLISHED_AT,
       });
       expect(mentorshipsRepository.findOneBy).toHaveBeenCalledExactlyOnceWith({
@@ -120,6 +129,34 @@ describe('MentorshipsService', () => {
         },
         { conflictPaths: ['mentorId'] },
       );
+    });
+  });
+
+  describe('saveMentorshipPrices', () => {
+    it('updates the prices of the current mentor with one update on mentor_id and null for every missing field', async () => {
+      mentorshipsRepository.update.mockResolvedValueOnce(buildUpdateResult(1));
+
+      await expect(
+        mentorshipsService.saveMentorshipPrices(MENTOR_ID, {
+          perSessionPriceBani: 15000,
+        }),
+      ).resolves.toBeUndefined();
+      expect(mentorshipsRepository.update).toHaveBeenCalledExactlyOnceWith(
+        { mentorId: MENTOR_ID },
+        {
+          perSessionPriceBani: 15000,
+          monthlyPriceBani: null,
+          monthlySessionsCount: null,
+        },
+      );
+    });
+
+    it('rejects saving prices when the mentor has no mentorship yet', async () => {
+      mentorshipsRepository.update.mockResolvedValueOnce(buildUpdateResult(0));
+
+      await expect(
+        mentorshipsService.saveMentorshipPrices(MENTOR_ID, {}),
+      ).rejects.toThrow(MENTORSHIP_NOT_FOUND);
     });
   });
 
