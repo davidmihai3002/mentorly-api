@@ -43,6 +43,7 @@ const BCRYPT_COST_10_HASH = /^\$2[aby]\$10\$[./A-Za-z0-9]{53}$/;
 const TEST_JWT_SECRET = 'unit-test-only-fake-jwt-secret-not-for-real-use';
 const OTHER_JWT_SECRET = 'another-unit-test-only-fake-jwt-secret-value';
 const TEST_TOKEN_LIFETIME_SECONDS = 60;
+const THIRTY_DAYS_IN_SECONDS = 2592000;
 const MILLISECONDS_PER_SECOND = 1000;
 
 const credentials = {
@@ -69,7 +70,7 @@ const buildUser = (changes: Partial<User> = {}): User =>
 
 describe('AuthService', () => {
   const insertUser = vi.fn((user: User) =>
-    Promise.resolve(Object.assign(user, { id: NEW_USER_ID })),
+    Promise.resolve(Object.assign(user, { id: NEW_USER_ID, tokenVersion: 0 })),
   );
   const usersRepository = {
     create: (account: Partial<User>) => Object.assign(new User(), account),
@@ -156,7 +157,7 @@ describe('AuthService', () => {
       birthDate: TURNS_16_ON_SIGN_UP_DAY,
     });
 
-    expect(registerResponse.id).toBe(NEW_USER_ID);
+    expect(registerResponse.user.id).toBe(NEW_USER_ID);
     expect(dataSource.transaction).toHaveBeenCalledOnce();
   });
 
@@ -180,7 +181,7 @@ describe('AuthService', () => {
     async ({ role, profileInserts }) => {
       const registerResponse = await authService.register({ ...signUp, role });
 
-      expect(registerResponse).toStrictEqual({
+      expect(registerResponse.user).toStrictEqual({
         id: NEW_USER_ID,
         email: 'ana.pop@example.com',
         role,
@@ -191,6 +192,29 @@ describe('AuthService', () => {
       expect(profilesRepository.insert.mock.calls).toEqual(profileInserts);
     },
   );
+
+  it('signs up with a session holding an access token and a 30-day refresh token, both signed with the token version of the inserted user', async () => {
+    const session = await authService.register(signUp);
+
+    expect(session).toStrictEqual({
+      accessToken: await signAsync.mock.results[0].value,
+      refreshToken: await signAsync.mock.results[1].value,
+      user: {
+        id: NEW_USER_ID,
+        email: 'ana.pop@example.com',
+        role: USER_ROLE.MENTEE,
+        firstName: 'Ana',
+        lastName: 'Pop',
+      },
+    });
+    expect(signAsync.mock.calls).toStrictEqual([
+      [{ sub: NEW_USER_ID, tokenVersion: 0, tokenType: 'ACCESS' }],
+      [
+        { sub: NEW_USER_ID, tokenVersion: 0, tokenType: 'REFRESH' },
+        { expiresIn: THIRTY_DAYS_IN_SECONDS },
+      ],
+    ]);
+  });
 
   describe('login', () => {
     it.each([
@@ -244,13 +268,14 @@ describe('AuthService', () => {
       ]);
     });
 
-    it('logs in with the right password, sets last_login_at and returns the public user fields with a token signed with only the id and token version', async () => {
+    it('logs in with the right password, sets last_login_at and returns a session with an access token, a refresh token and the public user fields', async () => {
       injectedUsersRepository.findOneBy.mockResolvedValue(buildUser());
 
-      const loginResponse = await authService.login(credentials);
+      const session = await authService.login(credentials);
 
-      expect(loginResponse).toStrictEqual({
+      expect(session).toStrictEqual({
         accessToken: await signAsync.mock.results[0].value,
+        refreshToken: await signAsync.mock.results[1].value,
         user: {
           id: USER_ID,
           email: 'ana.pop@example.com',
@@ -267,14 +292,18 @@ describe('AuthService', () => {
         [{ id: USER_ID }, { lastLoginAt: SIGN_UP_TIME }],
       ]);
       expect(signAsync.mock.calls).toStrictEqual([
-        [{ sub: USER_ID, tokenVersion: 4 }],
+        [{ sub: USER_ID, tokenVersion: 4, tokenType: 'ACCESS' }],
+        [
+          { sub: USER_ID, tokenVersion: 4, tokenType: 'REFRESH' },
+          { expiresIn: THIRTY_DAYS_IN_SECONDS },
+        ],
       ]);
     });
   });
 
   describe('authenticate', () => {
     const signAccessToken = (tokenVersion = 4): Promise<string> =>
-      jwtService.signAsync({ sub: USER_ID, tokenVersion });
+      jwtService.signAsync({ sub: USER_ID, tokenVersion, tokenType: 'ACCESS' });
     const signExpiredAccessToken = async (): Promise<string> => {
       const accessToken = await signAccessToken();
       const lifetimeMilliseconds =
@@ -290,10 +319,23 @@ describe('AuthService', () => {
           new JwtService({ secret: OTHER_JWT_SECRET }).signAsync({
             sub: USER_ID,
             tokenVersion: 4,
+            tokenType: 'ACCESS',
           }),
       ],
       ['that is not a JWT', () => Promise.resolve('not-a-jwt')],
       ['that has expired', signExpiredAccessToken],
+      [
+        'that is a refresh token',
+        () =>
+          jwtService.signAsync(
+            { sub: USER_ID, tokenVersion: 4, tokenType: 'REFRESH' },
+            { expiresIn: THIRTY_DAYS_IN_SECONDS },
+          ),
+      ],
+      [
+        'without a token type',
+        () => jwtService.signAsync({ sub: USER_ID, tokenVersion: 4 }),
+      ],
     ])(
       'rejects a token %s with 401, without loading the user',
       async (_case, createToken) => {
@@ -335,6 +377,98 @@ describe('AuthService', () => {
       await expect(
         authService.authenticate(await signAccessToken()),
       ).resolves.toStrictEqual({ id: USER_ID, role: USER_ROLE.MENTEE });
+    });
+  });
+
+  describe('refresh', () => {
+    const signRefreshToken = (tokenVersion = 4): Promise<string> =>
+      jwtService.signAsync(
+        { sub: USER_ID, tokenVersion, tokenType: 'REFRESH' },
+        { expiresIn: THIRTY_DAYS_IN_SECONDS },
+      );
+    const signExpiredRefreshToken = async (): Promise<string> => {
+      const refreshToken = await signRefreshToken();
+      const lifetimeMilliseconds =
+        (THIRTY_DAYS_IN_SECONDS + 1) * MILLISECONDS_PER_SECOND;
+      vi.setSystemTime(SIGN_UP_TIME.getTime() + lifetimeMilliseconds);
+      return refreshToken;
+    };
+
+    it.each([
+      [
+        'an access token',
+        () =>
+          jwtService.signAsync({
+            sub: USER_ID,
+            tokenVersion: 4,
+            tokenType: 'ACCESS',
+          }),
+      ],
+      [
+        'a token signed with another secret',
+        () =>
+          new JwtService({ secret: OTHER_JWT_SECRET }).signAsync({
+            sub: USER_ID,
+            tokenVersion: 4,
+            tokenType: 'REFRESH',
+          }),
+      ],
+      ['a string that is not a JWT', () => Promise.resolve('not-a-jwt')],
+      ['an empty string', () => Promise.resolve('')],
+      ['a refresh token older than 30 days', signExpiredRefreshToken],
+    ])(
+      'rejects %s with 401, without loading the user',
+      async (_case, createToken) => {
+        const refreshToken = await createToken();
+
+        await expect(authService.refresh(refreshToken)).rejects.toThrow(
+          new UnauthorizedException(),
+        );
+        expect(injectedUsersRepository.findOneBy).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects a refresh token of an unknown or deleted user with 401 by looking up only users without deleted_at', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(
+        authService.refresh(await signRefreshToken()),
+      ).rejects.toThrow(new UnauthorizedException());
+      expect(injectedUsersRepository.findOneBy.mock.calls).toStrictEqual([
+        [{ id: USER_ID, deletedAt: IsNull() }],
+      ]);
+    });
+
+    it('rejects a refresh token with an old token version with 401', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValue(
+        buildUser({ tokenVersion: 5 }),
+      );
+
+      await expect(
+        authService.refresh(await signRefreshToken(4)),
+      ).rejects.toThrow(new UnauthorizedException());
+    });
+
+    it('returns a new access token and the public user fields for a valid refresh token, signing nothing else', async () => {
+      injectedUsersRepository.findOneBy.mockResolvedValue(buildUser());
+      const refreshToken = await signRefreshToken();
+      signAsync.mockClear();
+
+      const refreshResponse = await authService.refresh(refreshToken);
+
+      expect(refreshResponse).toStrictEqual({
+        accessToken: await signAsync.mock.results[0].value,
+        user: {
+          id: USER_ID,
+          email: 'ana.pop@example.com',
+          role: USER_ROLE.MENTOR,
+          firstName: 'Ana',
+          lastName: 'Pop',
+        },
+      });
+      expect(signAsync.mock.calls).toStrictEqual([
+        [{ sub: USER_ID, tokenVersion: 4, tokenType: 'ACCESS' }],
+      ]);
     });
   });
 
