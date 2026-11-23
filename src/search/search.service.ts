@@ -4,6 +4,8 @@ import {
   type ObjectLiteral,
   type SelectQueryBuilder,
 } from 'typeorm';
+import { POSTGRES_INTEGER_MAX } from '../common/index.js';
+import { ENROLMENT_STATUS } from '../enrolments/index.js';
 import { FilesService } from '../files/index.js';
 import { MENTOR_PROFILE_STATUS } from '../profiles/index.js';
 import type {
@@ -13,6 +15,62 @@ import type {
 } from './dto/index.js';
 
 const RECOMMENDED_MENTORS_LIMIT = 3;
+const MIN_PRICE_BANI = 0;
+const SPONSORED_PRICE_BANI = 0;
+const FREE_TIME_DAYS = 7;
+const AVAILABILITY_TIME_ZONE = 'Europe/Bucharest';
+
+const PRICE_RANGE_CONDITION = `(
+  mentorship.per_session_price_bani BETWEEN :minPriceBani AND :maxPriceBani
+  OR mentorship.monthly_price_bani::numeric / mentorship.monthly_sessions_count BETWEEN :minPriceBani AND :maxPriceBani
+  OR (mentorship.is_sponsored AND ${SPONSORED_PRICE_BANI} BETWEEN :minPriceBani AND :maxPriceBani)
+)`;
+
+const MIN_RATING_CONDITION = `EXISTS (
+  SELECT 1
+  FROM mentor_rating_stats rated_mentor
+  WHERE rated_mentor.mentor_id = profile.user_id
+    AND rated_mentor.avg_overall >= :minRating
+)`;
+
+const FREE_SEATS_CONDITION = `(
+  profile.capacity IS NULL
+  OR profile.capacity > (
+    SELECT COUNT(*)
+    FROM enrolments active_enrolment
+    WHERE active_enrolment.mentorship_id = mentorship.id
+      AND active_enrolment.status = :activeEnrolmentStatus
+  )
+)`;
+
+const FREE_TIME_CONDITION = `EXISTS (
+  SELECT 1
+  FROM availability_slots free_slot
+  CROSS JOIN generate_series(0, :freeTimeDays) AS day_offset(days)
+  CROSS JOIN LATERAL (
+    SELECT (now() AT TIME ZONE :availabilityTimeZone)::date + day_offset.days AS local_date
+  ) slot_day
+  CROSS JOIN LATERAL (
+    SELECT
+      (slot_day.local_date + free_slot.start_time) AT TIME ZONE :availabilityTimeZone AS starts_at,
+      (slot_day.local_date + free_slot.end_time) AT TIME ZONE :availabilityTimeZone AS ends_at
+  ) slot_window
+  WHERE free_slot.mentor_id = profile.user_id
+    AND free_slot.day_of_week = EXTRACT(ISODOW FROM slot_day.local_date)
+    AND slot_window.ends_at > now()
+    AND slot_window.starts_at < now() + make_interval(days => :freeTimeDays)
+    AND NOT EXISTS (
+      SELECT 1
+      FROM sessions booked_session
+      WHERE booked_session.mentor_id = profile.user_id
+        AND booked_session.starts_at < slot_window.ends_at
+        AND booked_session.ends_at > slot_window.starts_at
+    )
+)`;
+
+type MentorSearchFilters = Omit<MentorSearchQueryDto, 'page' | 'pageSize'>;
+
+type PriceFilter = Pick<MentorSearchFilters, 'minPriceBani' | 'maxPriceBani'>;
 
 interface MentorCountRow {
   total: string;
@@ -46,10 +104,10 @@ export class SearchService {
   async searchMentors(
     query: MentorSearchQueryDto,
   ): Promise<MentorSearchResponseDto> {
-    const { page, pageSize } = query;
+    const { page, pageSize, ...filters } = query;
     const [total, mentorRows] = await Promise.all([
-      this.countSearchableMentors(),
-      this.findSearchableMentorRows(page, pageSize),
+      this.countSearchableMentors(filters),
+      this.findSearchableMentorRows(page, pageSize, filters),
     ]);
     const items = await this.toMentorSearchItems(mentorRows);
     return { items, page, pageSize, total };
@@ -96,8 +154,64 @@ export class SearchService {
     return searchableMentorsQuery;
   }
 
-  private async countSearchableMentors(): Promise<number> {
-    const countRow = await this.createSearchableMentorsQuery()
+  private addSearchFilters(
+    mentorsQuery: SelectQueryBuilder<ObjectLiteral>,
+    filters: MentorSearchFilters,
+  ): SelectQueryBuilder<ObjectLiteral> {
+    const {
+      domainId,
+      minPriceBani,
+      maxPriceBani,
+      minRating,
+      hasFreeSeats,
+      hasFreeTimeThisWeek,
+    } = filters;
+    if (domainId !== undefined) {
+      mentorsQuery.andWhere('profile.domain_id = :domainId', { domainId });
+    }
+    this.addPriceFilter(mentorsQuery, { minPriceBani, maxPriceBani });
+    if (minRating !== undefined) {
+      mentorsQuery.andWhere(MIN_RATING_CONDITION, { minRating });
+    }
+    if (hasFreeSeats === true) {
+      mentorsQuery.andWhere(FREE_SEATS_CONDITION, {
+        activeEnrolmentStatus: ENROLMENT_STATUS.ACTIVE,
+      });
+    }
+    if (hasFreeTimeThisWeek === true) {
+      mentorsQuery.andWhere(FREE_TIME_CONDITION, {
+        freeTimeDays: FREE_TIME_DAYS,
+        availabilityTimeZone: AVAILABILITY_TIME_ZONE,
+      });
+    }
+    return mentorsQuery;
+  }
+
+  private addPriceFilter(
+    mentorsQuery: SelectQueryBuilder<ObjectLiteral>,
+    priceFilter: PriceFilter,
+  ): void {
+    const { minPriceBani, maxPriceBani } = priceFilter;
+    const hasPriceFilter =
+      minPriceBani !== undefined || maxPriceBani !== undefined;
+    if (!hasPriceFilter) {
+      return;
+    }
+    const priceRange = {
+      minPriceBani: minPriceBani ?? MIN_PRICE_BANI,
+      maxPriceBani: maxPriceBani ?? POSTGRES_INTEGER_MAX,
+    };
+    mentorsQuery.andWhere(PRICE_RANGE_CONDITION, priceRange);
+  }
+
+  private async countSearchableMentors(
+    filters: MentorSearchFilters,
+  ): Promise<number> {
+    const searchableMentorsQuery = this.createSearchableMentorsQuery();
+    const countRow = await this.addSearchFilters(
+      searchableMentorsQuery,
+      filters,
+    )
       .select('COUNT(*)', 'total')
       .getRawOne<MentorCountRow>();
     const total = Number(countRow?.total ?? 0);
@@ -107,9 +221,11 @@ export class SearchService {
   private async findSearchableMentorRows(
     page: number,
     pageSize: number,
+    filters: MentorSearchFilters,
   ): Promise<MentorSearchRow[]> {
     const skippedMentors = (page - 1) * pageSize;
-    const mentorRows = await this.createMentorCardsQuery()
+    const mentorCardsQuery = this.createMentorCardsQuery();
+    const mentorRows = await this.addSearchFilters(mentorCardsQuery, filters)
       .offset(skippedMentors)
       .limit(pageSize)
       .getRawMany<MentorSearchRow>();

@@ -16,6 +16,11 @@ const SIGNED_PHOTO_URL =
   'https://storage.example.com/mentorly-uploads/signed-photo';
 const MENTEE_ID = '9d3f6b2e-1a7c-4e5b-8f0d-3c6a9e2b7f41';
 const MARKETING_DOMAIN_ID = '2b8e5c1f-7d4a-4f9e-a6b3-0e7c4d1a9f52';
+const FIRST_PAGE = { page: 1, pageSize: 20 };
+const BASE_CONDITIONS = [
+  ['account.deleted_at IS NULL'],
+  ['mentorship.published_at IS NOT NULL'],
+];
 
 const fullMentorRow = {
   mentorId: MIHAI_ID,
@@ -216,6 +221,199 @@ describe('SearchService', () => {
       },
     ]);
     expect(filesService.createDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  describe('filters', () => {
+    const expectConditionsOnBothQueries = (
+      filterConditions: unknown[][],
+    ): void => {
+      for (const queryBuilder of [countQueryBuilder, pageQueryBuilder]) {
+        expect(queryBuilder.andWhere.mock.calls).toStrictEqual([
+          ...BASE_CONDITIONS,
+          ...filterConditions,
+        ]);
+      }
+    };
+
+    const readFilterCondition = (): unknown => {
+      const [filterCondition] =
+        countQueryBuilder.andWhere.mock.calls[BASE_CONDITIONS.length];
+      return filterCondition;
+    };
+
+    beforeEach(() => {
+      returnMentors('0', []);
+    });
+
+    it('adds no condition when free seats and free time are false', async () => {
+      await searchService.searchMentors({
+        ...FIRST_PAGE,
+        hasFreeSeats: false,
+        hasFreeTimeThisWeek: false,
+      });
+
+      expectConditionsOnBothQueries([]);
+    });
+
+    it('counts and lists only mentors from the chosen domain', async () => {
+      await searchService.searchMentors({
+        ...FIRST_PAGE,
+        domainId: MARKETING_DOMAIN_ID,
+      });
+
+      expectConditionsOnBothQueries([
+        ['profile.domain_id = :domainId', { domainId: MARKETING_DOMAIN_ID }],
+      ]);
+    });
+
+    it.each([
+      [
+        'a minimum and a maximum price',
+        { minPriceBani: 5000, maxPriceBani: 20000 },
+        { minPriceBani: 5000, maxPriceBani: 20000 },
+      ],
+      [
+        'only a minimum price, up to the largest integer price',
+        { minPriceBani: 5000 },
+        { minPriceBani: 5000, maxPriceBani: 2147483647 },
+      ],
+      [
+        'only a maximum price, from 0 bani',
+        { maxPriceBani: 20000 },
+        { minPriceBani: 0, maxPriceBani: 20000 },
+      ],
+    ])(
+      'counts and lists mentors within %s',
+      async (_case, priceFilter, priceRange) => {
+        await searchService.searchMentors({ ...FIRST_PAGE, ...priceFilter });
+
+        expectConditionsOnBothQueries([
+          [
+            expect.stringContaining('BETWEEN :minPriceBani AND :maxPriceBani'),
+            priceRange,
+          ],
+        ]);
+      },
+    );
+
+    it('matches the price range on the per-session price, the exact monthly price per session or 0 for a sponsored mentorship', async () => {
+      await searchService.searchMentors({ ...FIRST_PAGE, maxPriceBani: 0 });
+
+      const priceCondition = readFilterCondition();
+
+      expect(priceCondition).toContain(
+        'mentorship.per_session_price_bani BETWEEN :minPriceBani AND :maxPriceBani',
+      );
+      expect(priceCondition).toContain(
+        'mentorship.monthly_price_bani::numeric / mentorship.monthly_sessions_count BETWEEN :minPriceBani AND :maxPriceBani',
+      );
+      expect(priceCondition).toContain(
+        'mentorship.is_sponsored AND 0 BETWEEN :minPriceBani AND :maxPriceBani',
+      );
+    });
+
+    it('counts and lists only mentors whose average review rating reaches the minimum, leaving out mentors without reviews', async () => {
+      await searchService.searchMentors({ ...FIRST_PAGE, minRating: 4.5 });
+
+      expectConditionsOnBothQueries([
+        [
+          expect.stringContaining('FROM mentor_rating_stats rated_mentor'),
+          { minRating: 4.5 },
+        ],
+      ]);
+      expect(readFilterCondition()).toContain(
+        'rated_mentor.avg_overall >= :minRating',
+      );
+    });
+
+    it('counts and lists only mentors without a capacity or with fewer active enrolments than their capacity', async () => {
+      await searchService.searchMentors({ ...FIRST_PAGE, hasFreeSeats: true });
+
+      expectConditionsOnBothQueries([
+        [
+          expect.stringContaining('profile.capacity IS NULL'),
+          { activeEnrolmentStatus: 'ACTIVE' },
+        ],
+      ]);
+      const freeSeatsCondition = readFilterCondition();
+      expect(freeSeatsCondition).toContain('OR profile.capacity > (');
+      expect(freeSeatsCondition).toContain(
+        'active_enrolment.mentorship_id = mentorship.id',
+      );
+      expect(freeSeatsCondition).toContain(
+        'active_enrolment.status = :activeEnrolmentStatus',
+      );
+    });
+
+    it('counts and lists only mentors with a weekly availability window in the next 7 days, Bucharest time, that has not ended and has no overlapping session', async () => {
+      await searchService.searchMentors({
+        ...FIRST_PAGE,
+        hasFreeTimeThisWeek: true,
+      });
+
+      expectConditionsOnBothQueries([
+        [
+          expect.stringContaining('FROM availability_slots free_slot'),
+          { freeTimeDays: 7, availabilityTimeZone: 'Europe/Bucharest' },
+        ],
+      ]);
+      const freeTimeCondition = readFilterCondition();
+      expect(freeTimeCondition).toContain(
+        'free_slot.day_of_week = EXTRACT(ISODOW FROM slot_day.local_date)',
+      );
+      expect(freeTimeCondition).toContain(
+        '(slot_day.local_date + free_slot.start_time) AT TIME ZONE :availabilityTimeZone AS starts_at',
+      );
+      expect(freeTimeCondition).toContain('slot_window.ends_at > now()');
+      expect(freeTimeCondition).toContain(
+        'slot_window.starts_at < now() + make_interval(days => :freeTimeDays)',
+      );
+      expect(freeTimeCondition).toContain('AND NOT EXISTS (');
+      expect(freeTimeCondition).toContain(
+        'booked_session.mentor_id = profile.user_id',
+      );
+      expect(freeTimeCondition).toContain(
+        'booked_session.starts_at < slot_window.ends_at',
+      );
+      expect(freeTimeCondition).toContain(
+        'booked_session.ends_at > slot_window.starts_at',
+      );
+    });
+
+    it('combines every filter on both queries and keeps the paging', async () => {
+      await searchService.searchMentors({
+        page: 2,
+        pageSize: 10,
+        domainId: MARKETING_DOMAIN_ID,
+        minPriceBani: 5000,
+        maxPriceBani: 20000,
+        minRating: 4,
+        hasFreeSeats: true,
+        hasFreeTimeThisWeek: true,
+      });
+
+      expectConditionsOnBothQueries([
+        ['profile.domain_id = :domainId', { domainId: MARKETING_DOMAIN_ID }],
+        [
+          expect.stringContaining('BETWEEN :minPriceBani AND :maxPriceBani'),
+          { minPriceBani: 5000, maxPriceBani: 20000 },
+        ],
+        [
+          expect.stringContaining('avg_overall >= :minRating'),
+          { minRating: 4 },
+        ],
+        [
+          expect.stringContaining('profile.capacity IS NULL'),
+          { activeEnrolmentStatus: 'ACTIVE' },
+        ],
+        [
+          expect.stringContaining('FROM availability_slots free_slot'),
+          { freeTimeDays: 7, availabilityTimeZone: 'Europe/Bucharest' },
+        ],
+      ]);
+      expect(pageQueryBuilder.offset).toHaveBeenCalledExactlyOnceWith(10);
+      expect(pageQueryBuilder.limit).toHaveBeenCalledExactlyOnceWith(10);
+    });
   });
 });
 

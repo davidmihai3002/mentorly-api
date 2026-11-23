@@ -1,6 +1,5 @@
 import { IsInt, IsOptional, IsPositive, Max } from 'class-validator';
-
-const POSTGRES_SMALLINT_MAX = 32767;
+import { POSTGRES_SMALLINT_MAX } from '../../common/index.js';
 
 export class MentorCapacityDto {
   @IsOptional()
