@@ -14,6 +14,8 @@ const BIANCA_ID = '7e2b9d4a-6c1f-4a3e-8b5d-0f9c3a7e2d16';
 const AVATAR_STORAGE_KEY = `${MIHAI_ID}/3a6c9e1b-5d8f-4b2a-9c7e-1d4f7a0c3e95`;
 const SIGNED_PHOTO_URL =
   'https://storage.example.com/mentorly-uploads/signed-photo';
+const MENTEE_ID = '9d3f6b2e-1a7c-4e5b-8f0d-3c6a9e2b7f41';
+const MARKETING_DOMAIN_ID = '2b8e5c1f-7d4a-4f9e-a6b3-0e7c4d1a9f52';
 
 const fullMentorRow = {
   mentorId: MIHAI_ID,
@@ -214,5 +216,166 @@ describe('SearchService', () => {
       },
     ]);
     expect(filesService.createDownloadUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe('SearchService recommendations', () => {
+  const dataSource = {
+    createQueryBuilder: vi.fn<() => QueryBuilderMock>(),
+  };
+  const filesService = {
+    createDownloadUrl: vi.fn<FilesService['createDownloadUrl']>(),
+  };
+  let menteeQueryBuilder: QueryBuilderMock;
+  let mentorsQueryBuilder: QueryBuilderMock;
+  let searchService: SearchService;
+
+  const returnMenteeDomain = (domainId: string | null): void => {
+    menteeQueryBuilder.getRawOne.mockResolvedValueOnce({ domainId });
+  };
+
+  const returnRecommendedMentors = (
+    mentorRows: (typeof fullMentorRow | typeof bareMentorRow)[],
+  ): void => {
+    returnMenteeDomain(MARKETING_DOMAIN_ID);
+    mentorsQueryBuilder.getRawMany.mockResolvedValueOnce(mentorRows);
+  };
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    menteeQueryBuilder = createQueryBuilderMock();
+    mentorsQueryBuilder = createQueryBuilderMock();
+    dataSource.createQueryBuilder
+      .mockReturnValueOnce(menteeQueryBuilder)
+      .mockReturnValueOnce(mentorsQueryBuilder);
+    const testingModule = await Test.createTestingModule({
+      providers: [
+        SearchService,
+        { provide: DataSource, useValue: dataSource },
+        { provide: FilesService, useValue: filesService },
+      ],
+    }).compile();
+
+    searchService = testingModule.get(SearchService);
+  });
+
+  it('reads the domain of the signed-in mentee from the mentee profile', async () => {
+    returnMenteeDomain(null);
+
+    await searchService.findRecommendedMentors(MENTEE_ID);
+
+    expect(menteeQueryBuilder.from).toHaveBeenCalledExactlyOnceWith(
+      'mentee_profiles',
+      'mentee_profile',
+    );
+    expect(menteeQueryBuilder.select).toHaveBeenCalledExactlyOnceWith(
+      'mentee_profile.domain_id',
+      'domainId',
+    );
+    expect(menteeQueryBuilder.where).toHaveBeenCalledExactlyOnceWith(
+      'mentee_profile.user_id = :menteeId',
+      { menteeId: MENTEE_ID },
+    );
+  });
+
+  it.each([
+    ['has not filled in the matching form', { domainId: null }],
+    ['has no mentee profile', undefined],
+  ])(
+    'recommends no mentors and runs no mentor query when the mentee %s',
+    async (_case, menteeDomainRow) => {
+      menteeQueryBuilder.getRawOne.mockResolvedValueOnce(menteeDomainRow);
+
+      const recommendedMentors =
+        await searchService.findRecommendedMentors(MENTEE_ID);
+
+      expect(recommendedMentors).toStrictEqual([]);
+      expect(dataSource.createQueryBuilder).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('recommends only approved mentors with a published mentorship and an account that is not deleted from the domain of the mentee', async () => {
+    returnRecommendedMentors([]);
+
+    await searchService.findRecommendedMentors(MENTEE_ID);
+
+    expect(mentorsQueryBuilder.from).toHaveBeenCalledExactlyOnceWith(
+      'mentor_profiles',
+      'profile',
+    );
+    expect(mentorsQueryBuilder.innerJoin.mock.calls).toStrictEqual([
+      ['users', 'account', 'account.id = profile.user_id'],
+      ['mentorships', 'mentorship', 'mentorship.mentor_id = profile.user_id'],
+    ]);
+    expect(mentorsQueryBuilder.where).toHaveBeenCalledExactlyOnceWith(
+      'profile.status = :approvedStatus',
+      { approvedStatus: 'APPROVED' },
+    );
+    expect(mentorsQueryBuilder.andWhere.mock.calls).toStrictEqual([
+      ['account.deleted_at IS NULL'],
+      ['mentorship.published_at IS NOT NULL'],
+      [
+        'profile.domain_id = :menteeDomainId',
+        { menteeDomainId: MARKETING_DOMAIN_ID },
+      ],
+    ]);
+  });
+
+  it('orders recommendations by rating with unrated mentors last, then by the newest publication, then by mentor id, and keeps the first 3', async () => {
+    returnRecommendedMentors([]);
+
+    await searchService.findRecommendedMentors(MENTEE_ID);
+
+    expect(mentorsQueryBuilder.orderBy).toHaveBeenCalledExactlyOnceWith(
+      'rating_stats.avg_overall',
+      'DESC',
+      'NULLS LAST',
+    );
+    expect(mentorsQueryBuilder.addOrderBy.mock.calls).toStrictEqual([
+      ['mentorship.published_at', 'DESC'],
+      ['profile.user_id', 'ASC'],
+    ]);
+    expect(mentorsQueryBuilder.limit).toHaveBeenCalledExactlyOnceWith(3);
+    expect(mentorsQueryBuilder.offset).not.toHaveBeenCalled();
+  });
+
+  it('returns recommended mentors as the same cards as the mentor search', async () => {
+    returnRecommendedMentors([fullMentorRow, bareMentorRow]);
+    filesService.createDownloadUrl.mockResolvedValueOnce(SIGNED_PHOTO_URL);
+
+    const recommendedMentors =
+      await searchService.findRecommendedMentors(MENTEE_ID);
+
+    expect(recommendedMentors).toStrictEqual([
+      {
+        mentorId: MIHAI_ID,
+        firstName: 'Mihai',
+        lastName: 'Popescu',
+        photoUrl: SIGNED_PHOTO_URL,
+        domainName: 'Marketing',
+        perSessionPriceBani: 12000,
+        monthlyPriceBani: 43200,
+        rating: 4.75,
+        reviewCount: 8,
+        hasTest: true,
+        sponsorName: 'Nordwave Software',
+      },
+      {
+        mentorId: BIANCA_ID,
+        firstName: 'Bianca',
+        lastName: 'Pavel',
+        photoUrl: null,
+        domainName: null,
+        perSessionPriceBani: 15000,
+        monthlyPriceBani: null,
+        rating: null,
+        reviewCount: 0,
+        hasTest: false,
+        sponsorName: null,
+      },
+    ]);
+    expect(filesService.createDownloadUrl).toHaveBeenCalledExactlyOnceWith(
+      AVATAR_STORAGE_KEY,
+    );
   });
 });
