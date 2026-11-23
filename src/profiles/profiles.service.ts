@@ -8,11 +8,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { AuthService } from '../auth/index.js';
 import { DomainsService } from '../domains/index.js';
+import { EnrolmentsService } from '../enrolments/index.js';
 import { FILE_MIME_TYPE, FilesService } from '../files/index.js';
 import type { StoredFile } from '../files/index.js';
 import type {
   MentorApplicationDto,
   MentorApplicationResponseDto,
+  MentorCapacityDto,
   MentorProfileDto,
   MentorProfileResponseDto,
 } from './dto/index.js';
@@ -54,6 +56,7 @@ export class ProfilesService {
     private readonly filesService: FilesService,
     private readonly authService: AuthService,
     private readonly domainsService: DomainsService,
+    private readonly enrolmentsService: EnrolmentsService,
   ) {}
 
   async submitMentorApplication(
@@ -88,11 +91,12 @@ export class ProfilesService {
       throw new NotFoundException(MENTOR_PROFILE_NOT_FOUND_MESSAGE);
     }
 
-    const [socialLinks, photoUrl] = await Promise.all([
+    const [socialLinks, photoUrl, occupiedSeats] = await Promise.all([
       this.findSocialLinks(userId),
       this.findPhotoUrl(userId),
+      this.enrolmentsService.countActiveByMentor(userId),
     ]);
-    const { status, domainId, bio, highlights } = mentorProfile;
+    const { status, domainId, bio, highlights, capacity } = mentorProfile;
     const {
       workplaces = [],
       achievements = [],
@@ -106,6 +110,8 @@ export class ProfilesService {
       highlights: highlightLists,
       socialLinks,
       photoUrl,
+      capacity,
+      occupiedSeats,
     };
   }
 
@@ -151,6 +157,21 @@ export class ProfilesService {
     }
 
     await this.authService.setAvatar(userId, fileId);
+  }
+
+  async setMentorCapacity(
+    userId: string,
+    mentorCapacity: MentorCapacityDto,
+  ): Promise<void> {
+    const capacity = mentorCapacity.capacity ?? null;
+    const updateResult = await this.mentorProfilesRepository.update(
+      { userId },
+      { capacity },
+    );
+    const isProfileMissing = updateResult.affected === 0;
+    if (isProfileMissing) {
+      throw new NotFoundException(MENTOR_PROFILE_NOT_FOUND_MESSAGE);
+    }
   }
 
   private async findSocialLinks(

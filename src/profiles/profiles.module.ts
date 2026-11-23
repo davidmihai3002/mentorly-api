@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/index.js';
 import { DomainsModule } from '../domains/index.js';
+import { EnrolmentsModule } from '../enrolments/index.js';
 import { FilesModule } from '../files/index.js';
 import {
   MentorCredential,
@@ -15,6 +16,7 @@ import { ProfilesService } from './profiles.service.js';
   imports: [
     AuthModule,
     DomainsModule,
+    EnrolmentsModule,
     FilesModule,
     TypeOrmModule.forFeature([
       MentorProfile,

@@ -5,9 +5,10 @@ import {
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource, type Repository } from 'typeorm';
+import { DataSource, UpdateResult, type Repository } from 'typeorm';
 import { AuthService } from '../auth/index.js';
 import { DomainsService } from '../domains/index.js';
+import { EnrolmentsService } from '../enrolments/index.js';
 import { FilesService, StoredFile } from '../files/index.js';
 import type { MentorApplicationDto, MentorProfileDto } from './dto/index.js';
 import {
@@ -101,8 +102,12 @@ const buildMentorProfile = (changes: Partial<MentorProfile>): MentorProfile =>
     motivation:
       'I have led backend teams for six years and want to help juniors grow.',
     highlights: {},
+    capacity: null,
     ...changes,
   });
+
+const buildUpdateResult = (affected: number): UpdateResult =>
+  Object.assign(new UpdateResult(), { raw: [], affected, generatedMaps: [] });
 
 const buildSocialLink = (
   changes: Partial<MentorSocialLink>,
@@ -113,6 +118,7 @@ describe('ProfilesService', () => {
   const mentorProfilesRepository = {
     existsBy: vi.fn<Repository<MentorProfile>['existsBy']>(),
     findOneBy: vi.fn<Repository<MentorProfile>['findOneBy']>(),
+    update: vi.fn<Repository<MentorProfile>['update']>(),
   };
   const mentorSocialLinksRepository = {
     find: vi.fn<Repository<MentorSocialLink>['find']>(),
@@ -128,6 +134,9 @@ describe('ProfilesService', () => {
   };
   const domainsService = {
     isActiveDomain: vi.fn<DomainsService['isActiveDomain']>(),
+  };
+  const enrolmentsService = {
+    countActiveByMentor: vi.fn<EnrolmentsService['countActiveByMentor']>(),
   };
   const insertMentorProfile = vi.fn<Repository<MentorProfile>['insert']>();
   const updateMentorProfile = vi.fn<Repository<MentorProfile>['update']>();
@@ -176,6 +185,7 @@ describe('ProfilesService', () => {
         { provide: FilesService, useValue: filesService },
         { provide: AuthService, useValue: authService },
         { provide: DomainsService, useValue: domainsService },
+        { provide: EnrolmentsService, useValue: enrolmentsService },
       ],
     }).compile();
 
@@ -322,6 +332,7 @@ describe('ProfilesService', () => {
         }),
       ]);
       authService.findAvatarFileId.mockResolvedValueOnce(null);
+      enrolmentsService.countActiveByMentor.mockResolvedValueOnce(0);
 
       await expect(
         profilesService.getMentorProfile(USER_ID),
@@ -339,6 +350,8 @@ describe('ProfilesService', () => {
           { platform: 'WEBSITE', url: 'https://ana-pop.dev' },
         ],
         photoUrl: null,
+        capacity: null,
+        occupiedSeats: 0,
       });
       expect(mentorSocialLinksRepository.find).toHaveBeenCalledExactlyOnceWith({
         where: { mentorId: USER_ID },
@@ -365,6 +378,23 @@ describe('ProfilesService', () => {
       expect(filesService.createDownloadUrl).toHaveBeenCalledExactlyOnceWith(
         PHOTO_STORAGE_KEY,
       );
+    });
+
+    it('returns the capacity and the seats taken by active enrolments', async () => {
+      mentorProfilesRepository.findOneBy.mockResolvedValueOnce(
+        buildMentorProfile({ capacity: 5 }),
+      );
+      mentorSocialLinksRepository.find.mockResolvedValueOnce([]);
+      authService.findAvatarFileId.mockResolvedValueOnce(null);
+      enrolmentsService.countActiveByMentor.mockResolvedValueOnce(3);
+
+      const mentorProfile = await profilesService.getMentorProfile(USER_ID);
+
+      expect(mentorProfile.capacity).toBe(5);
+      expect(mentorProfile.occupiedSeats).toBe(3);
+      expect(
+        enrolmentsService.countActiveByMentor,
+      ).toHaveBeenCalledExactlyOnceWith(USER_ID);
     });
   });
 
@@ -455,6 +485,34 @@ describe('ProfilesService', () => {
         { userId: USER_ID },
         { domainId: null, bio: null, highlights },
       );
+    });
+  });
+
+  describe('setMentorCapacity', () => {
+    it.each([
+      ['saves the given capacity', { capacity: 8 }, 8],
+      ['clears the capacity when it is left out', {}, null],
+    ])('%s', async (_behaviour, mentorCapacity, savedCapacity) => {
+      mentorProfilesRepository.update.mockResolvedValueOnce(
+        buildUpdateResult(1),
+      );
+
+      await profilesService.setMentorCapacity(USER_ID, mentorCapacity);
+
+      expect(mentorProfilesRepository.update).toHaveBeenCalledExactlyOnceWith(
+        { userId: USER_ID },
+        { capacity: savedCapacity },
+      );
+    });
+
+    it('rejects a mentor without a profile with 404', async () => {
+      mentorProfilesRepository.update.mockResolvedValueOnce(
+        buildUpdateResult(0),
+      );
+
+      await expect(
+        profilesService.setMentorCapacity(USER_ID, { capacity: 8 }),
+      ).rejects.toThrow(MENTOR_PROFILE_NOT_FOUND);
     });
   });
 

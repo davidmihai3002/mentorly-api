@@ -14,4 +14,6 @@ export interface MentorProfileResponseDto {
   };
   socialLinks: { platform: MentorSocialPlatform; url: string }[];
   photoUrl: string | null;
+  capacity: number | null;
+  occupiedSeats: number;
 }
