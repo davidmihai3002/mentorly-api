@@ -24,6 +24,7 @@ contains the real values.
 |---|---|---|---|
 | `DATABASE_URL` | app, TypeORM CLI, migration script | yes | PostgreSQL connection string, see below |
 | `JWT_SECRET` | auth module | yes | signs and verifies access tokens; at least 32 characters, generate with `openssl rand -base64 48` |
+| `GOOGLE_CLIENT_ID` | auth module | yes | OAuth client ID of the web app from Google Cloud (Clients); not a secret |
 | `S3_ENDPOINT` | files module | yes | URL of the S3-compatible object storage API, e.g. `https://<account>.r2.cloudflarestorage.com` |
 | `S3_REGION` | files module | yes | region of the bucket; providers without regions accept `auto` or `us-east-1` |
 | `S3_BUCKET` | files module | yes | bucket that stores uploads (CVs, certificates, diplomas) |

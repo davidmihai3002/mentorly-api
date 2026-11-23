@@ -1,3 +1,5 @@
+import { readRequiredVariable } from './utils/index.js';
+
 export interface StorageConfig {
   endpoint: string;
   region: string;
@@ -5,15 +7,6 @@ export interface StorageConfig {
   accessKeyId: string;
   secretAccessKey: string;
 }
-
-const readRequiredVariable = (name: string): string => {
-  const value = process.env[name];
-  const isMissing = !value;
-  if (isMissing) {
-    throw new Error(`${name} must be set`);
-  }
-  return value;
-};
 
 export const getStorageConfig = (): StorageConfig => {
   const endpoint = readRequiredVariable('S3_ENDPOINT');

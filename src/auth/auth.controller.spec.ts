@@ -4,11 +4,12 @@ import { USER_ROLE } from '../users/index.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import type { AuthenticatedUser } from './authenticated-request.interface.js';
-import type { LoginDto, RegisterDto } from './dto/index.js';
+import type { GoogleRegisterDto, LoginDto, RegisterDto } from './dto/index.js';
 
 const USER_ID = '0b7d9e2f-3c4a-4e5b-8f6a-7c8d9e0f1a2b';
 const ACCESS_TOKEN = 'access-token-value';
 const REFRESH_TOKEN = 'refresh-token-value';
+const GOOGLE_ID_TOKEN = 'google-id-token-value';
 
 const user = {
   id: USER_ID,
@@ -46,12 +47,21 @@ const signUp = {
   hasAcceptedTerms: true,
 } satisfies RegisterDto;
 
+const googleSignUp = {
+  idToken: GOOGLE_ID_TOKEN,
+  role: USER_ROLE.MENTEE,
+  birthDate: '2001-03-15',
+  hasAcceptedTerms: true,
+} satisfies GoogleRegisterDto;
+
 const currentUser: AuthenticatedUser = { id: USER_ID, role: USER_ROLE.MENTEE };
 
 describe('AuthController', () => {
   const authService = {
     register: vi.fn<AuthService['register']>(),
     login: vi.fn<AuthService['login']>(),
+    googleRegister: vi.fn<AuthService['googleRegister']>(),
+    googleLogin: vi.fn<AuthService['googleLogin']>(),
     refresh: vi.fn<AuthService['refresh']>(),
     logout: vi.fn<AuthService['logout']>(),
   };
@@ -75,11 +85,25 @@ describe('AuthController', () => {
   it.each([
     ['login', () => authController.login(credentials, expressResponse)],
     ['register', () => authController.register(signUp, expressResponse)],
+    [
+      'Google login',
+      () =>
+        authController.googleLogin(
+          { idToken: GOOGLE_ID_TOKEN },
+          expressResponse,
+        ),
+    ],
+    [
+      'Google register',
+      () => authController.googleRegister(googleSignUp, expressResponse),
+    ],
   ])(
     '%s sets the refresh token as an httpOnly, secure, strict cookie for 30 days and returns only the access token and the user',
     async (_endpoint, startSession) => {
       authService.login.mockResolvedValue(session);
       authService.register.mockResolvedValue(session);
+      authService.googleLogin.mockResolvedValue(session);
+      authService.googleRegister.mockResolvedValue(session);
 
       await expect(startSession()).resolves.toStrictEqual({
         accessToken: ACCESS_TOKEN,
@@ -90,6 +114,29 @@ describe('AuthController', () => {
       ]);
     },
   );
+
+  it('Google login passes only the ID token from the body to the service, exactly once', async () => {
+    authService.googleLogin.mockResolvedValue(session);
+
+    await authController.googleLogin(
+      { idToken: GOOGLE_ID_TOKEN },
+      expressResponse,
+    );
+
+    expect(authService.googleLogin).toHaveBeenCalledExactlyOnceWith(
+      GOOGLE_ID_TOKEN,
+    );
+  });
+
+  it('Google register passes the whole sign-up to the service, exactly once', async () => {
+    authService.googleRegister.mockResolvedValue(session);
+
+    await authController.googleRegister(googleSignUp, expressResponse);
+
+    expect(authService.googleRegister).toHaveBeenCalledExactlyOnceWith(
+      googleSignUp,
+    );
+  });
 
   it('refresh passes the refresh token cookie value to the service and returns its response', async () => {
     authService.refresh.mockResolvedValue({ accessToken: ACCESS_TOKEN, user });

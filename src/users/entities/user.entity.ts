@@ -33,6 +33,9 @@ export class User {
   @Column({ name: 'terms_accepted_at', type: 'timestamptz', nullable: false })
   termsAcceptedAt: Date;
 
+  @Column({ name: 'email_verified_at', type: 'timestamptz', nullable: true })
+  emailVerifiedAt: Date | null;
+
   @Column({
     name: 'token_version',
     type: 'integer',
