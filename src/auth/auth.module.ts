@@ -6,7 +6,7 @@ import { MenteeProfile, User } from '../users/index.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 
-const ACCESS_TOKEN_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
+const ACCESS_TOKEN_LIFETIME_SECONDS = 15 * 60;
 
 @Module({
   imports: [

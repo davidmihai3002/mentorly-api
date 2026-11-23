@@ -9,13 +9,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { compare, hash } from 'bcryptjs';
 import { DataSource, IsNull, Repository } from 'typeorm';
 import { MenteeProfile, USER_ROLE, User } from '../users/index.js';
+import type { AuthSession } from './auth-session.interface.js';
 import type { AuthenticatedUser } from './authenticated-request.interface.js';
-import type {
-  LoginDto,
-  LoginResponseDto,
-  RegisterDto,
-  UserResponseDto,
-} from './dto/index.js';
+import type { LoginDto, LoginResponseDto, RegisterDto } from './dto/index.js';
+import { REFRESH_TOKEN_LIFETIME_SECONDS } from './refresh-token-cookie.js';
 import {
   MINIMUM_SIGN_UP_AGE,
   isOldEnoughToSignUp,
@@ -29,9 +26,14 @@ const INVALID_CREDENTIALS_MESSAGE = 'Invalid email or password.';
 const DUMMY_PASSWORD_HASH =
   '$2b$10$Ei5TpbJPQPNKf3I9WtJaEe89OhfsJDxHh8NEZWHbZ98ww2.M3vh4W';
 
-interface AccessTokenPayload {
+const TOKEN_TYPE = { ACCESS: 'ACCESS', REFRESH: 'REFRESH' } as const;
+
+type TokenType = (typeof TOKEN_TYPE)[keyof typeof TOKEN_TYPE];
+
+interface TokenPayload {
   sub: string;
   tokenVersion: number;
+  tokenType: TokenType;
 }
 
 @Injectable()
@@ -43,7 +45,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async register(signUp: RegisterDto): Promise<UserResponseDto> {
+  async register(signUp: RegisterDto): Promise<AuthSession> {
     const today = new Date();
     const isOldEnough = isOldEnoughToSignUp(signUp.birthDate, today);
     if (!isOldEnough) {
@@ -76,11 +78,11 @@ export class AuthService {
       return user;
     });
 
-    const registeredUser = toUserResponse(createdUser);
-    return registeredUser;
+    const session = await this.createSession(createdUser);
+    return session;
   }
 
-  async login(credentials: LoginDto): Promise<LoginResponseDto> {
+  async login(credentials: LoginDto): Promise<AuthSession> {
     const user = await this.usersRepository.findOneBy({
       email: credentials.email,
       deletedAt: IsNull(),
@@ -94,30 +96,22 @@ export class AuthService {
     }
 
     const lastLoginAt = new Date();
-    const accessTokenPayload: AccessTokenPayload = {
-      sub: user.id,
-      tokenVersion: user.tokenVersion,
-    };
-    const [, accessToken] = await Promise.all([
+    const [, session] = await Promise.all([
       this.usersRepository.update({ id: user.id }, { lastLoginAt }),
-      this.jwtService.signAsync(accessTokenPayload),
+      this.createSession(user),
     ]);
+    return session;
+  }
+
+  async refresh(refreshToken: string): Promise<LoginResponseDto> {
+    const user = await this.findSessionUser(refreshToken, TOKEN_TYPE.REFRESH);
+    const accessToken = await this.signToken(user, TOKEN_TYPE.ACCESS);
     const userResponse = toUserResponse(user);
     return { accessToken, user: userResponse };
   }
 
   async authenticate(accessToken: string): Promise<AuthenticatedUser> {
-    const payload = await this.verifyAccessToken(accessToken);
-    const user = await this.usersRepository.findOneBy({
-      id: payload.sub,
-      deletedAt: IsNull(),
-    });
-    const isCurrentSession =
-      user !== null && user.tokenVersion === payload.tokenVersion;
-    if (!isCurrentSession) {
-      throw new UnauthorizedException();
-    }
-
+    const user = await this.findSessionUser(accessToken, TOKEN_TYPE.ACCESS);
     const { id, role } = user;
     return { id, role };
   }
@@ -136,10 +130,53 @@ export class AuthService {
     return avatarFileId;
   }
 
-  private async verifyAccessToken(token: string): Promise<AccessTokenPayload> {
+  private async createSession(user: User): Promise<AuthSession> {
+    const [accessToken, refreshToken] = await Promise.all([
+      this.signToken(user, TOKEN_TYPE.ACCESS),
+      this.signToken(user, TOKEN_TYPE.REFRESH),
+    ]);
+    const userResponse = toUserResponse(user);
+    return { accessToken, refreshToken, user: userResponse };
+  }
+
+  private signToken(user: User, tokenType: TokenType): Promise<string> {
+    const payload: TokenPayload = {
+      sub: user.id,
+      tokenVersion: user.tokenVersion,
+      tokenType,
+    };
+    if (tokenType === TOKEN_TYPE.ACCESS) {
+      return this.jwtService.signAsync(payload);
+    }
+    return this.jwtService.signAsync(payload, {
+      expiresIn: REFRESH_TOKEN_LIFETIME_SECONDS,
+    });
+  }
+
+  private async findSessionUser(
+    token: string,
+    tokenType: TokenType,
+  ): Promise<User> {
+    const payload = await this.verifyToken(token);
+    if (payload.tokenType !== tokenType) {
+      throw new UnauthorizedException();
+    }
+
+    const user = await this.usersRepository.findOneBy({
+      id: payload.sub,
+      deletedAt: IsNull(),
+    });
+    const isCurrentSession =
+      user !== null && user.tokenVersion === payload.tokenVersion;
+    if (!isCurrentSession) {
+      throw new UnauthorizedException();
+    }
+    return user;
+  }
+
+  private async verifyToken(token: string): Promise<TokenPayload> {
     try {
-      const payload =
-        await this.jwtService.verifyAsync<AccessTokenPayload>(token);
+      const payload = await this.jwtService.verifyAsync<TokenPayload>(token);
       return payload;
     } catch {
       throw new UnauthorizedException();

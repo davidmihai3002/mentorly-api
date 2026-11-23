@@ -33,7 +33,12 @@ export class User {
   @Column({ name: 'terms_accepted_at', type: 'timestamptz', nullable: false })
   termsAcceptedAt: Date;
 
-  @Column({ name: 'token_version', type: 'integer', nullable: false })
+  @Column({
+    name: 'token_version',
+    type: 'integer',
+    nullable: false,
+    default: 0,
+  })
   tokenVersion: number;
 
   @Column({ name: 'last_login_at', type: 'timestamptz', nullable: true })
