@@ -1,8 +1,10 @@
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import {
+  POSTGRES_INTEGER_MAX,
+  POSTGRES_SMALLINT_MAX,
+} from '../../common/index.js';
 
 const MIN_PRICE_FIELD_VALUE = 1;
-const POSTGRES_INTEGER_MAX = 2147483647;
-const POSTGRES_SMALLINT_MAX = 32767;
 
 export class MentorshipPricesDto {
   @IsOptional()
