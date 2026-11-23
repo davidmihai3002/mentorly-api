@@ -12,8 +12,14 @@ import type {
   MentorSearchResponseDto,
 } from './dto/index.js';
 
+const RECOMMENDED_MENTORS_LIMIT = 3;
+
 interface MentorCountRow {
   total: string;
+}
+
+interface MenteeDomainRow {
+  domainId: string | null;
 }
 
 interface MentorSearchRow {
@@ -45,10 +51,31 @@ export class SearchService {
       this.countSearchableMentors(),
       this.findSearchableMentorRows(page, pageSize),
     ]);
-    const items = await Promise.all(
-      mentorRows.map((mentorRow) => this.toMentorSearchItem(mentorRow)),
-    );
+    const items = await this.toMentorSearchItems(mentorRows);
     return { items, page, pageSize, total };
+  }
+
+  async findRecommendedMentors(
+    menteeId: string,
+  ): Promise<MentorSearchItemDto[]> {
+    const menteeDomainId = await this.findMenteeDomainId(menteeId);
+    if (menteeDomainId === null) {
+      return [];
+    }
+    const mentorRows = await this.findRecommendedMentorRows(menteeDomainId);
+    const recommendedMentors = await this.toMentorSearchItems(mentorRows);
+    return recommendedMentors;
+  }
+
+  private async findMenteeDomainId(menteeId: string): Promise<string | null> {
+    const menteeDomainRow = await this.dataSource
+      .createQueryBuilder()
+      .from('mentee_profiles', 'mentee_profile')
+      .select('mentee_profile.domain_id', 'domainId')
+      .where('mentee_profile.user_id = :menteeId', { menteeId })
+      .getRawOne<MenteeDomainRow>();
+    const menteeDomainId = menteeDomainRow?.domainId ?? null;
+    return menteeDomainId;
   }
 
   private createSearchableMentorsQuery(): SelectQueryBuilder<ObjectLiteral> {
@@ -82,7 +109,25 @@ export class SearchService {
     pageSize: number,
   ): Promise<MentorSearchRow[]> {
     const skippedMentors = (page - 1) * pageSize;
-    const mentorRows = await this.createSearchableMentorsQuery()
+    const mentorRows = await this.createMentorCardsQuery()
+      .offset(skippedMentors)
+      .limit(pageSize)
+      .getRawMany<MentorSearchRow>();
+    return mentorRows;
+  }
+
+  private async findRecommendedMentorRows(
+    menteeDomainId: string,
+  ): Promise<MentorSearchRow[]> {
+    const mentorRows = await this.createMentorCardsQuery()
+      .andWhere('profile.domain_id = :menteeDomainId', { menteeDomainId })
+      .limit(RECOMMENDED_MENTORS_LIMIT)
+      .getRawMany<MentorSearchRow>();
+    return mentorRows;
+  }
+
+  private createMentorCardsQuery(): SelectQueryBuilder<ObjectLiteral> {
+    const mentorCardsQuery = this.createSearchableMentorsQuery()
       .leftJoin('domains', 'domain', 'domain.id = profile.domain_id')
       .leftJoin(
         'mentor_rating_stats',
@@ -104,11 +149,17 @@ export class SearchService {
       .addSelect('sponsor.name', 'sponsorName')
       .orderBy('rating_stats.avg_overall', 'DESC', 'NULLS LAST')
       .addOrderBy('mentorship.published_at', 'DESC')
-      .addOrderBy('profile.user_id', 'ASC')
-      .offset(skippedMentors)
-      .limit(pageSize)
-      .getRawMany<MentorSearchRow>();
-    return mentorRows;
+      .addOrderBy('profile.user_id', 'ASC');
+    return mentorCardsQuery;
+  }
+
+  private async toMentorSearchItems(
+    mentorRows: MentorSearchRow[],
+  ): Promise<MentorSearchItemDto[]> {
+    const mentorSearchItems = await Promise.all(
+      mentorRows.map((mentorRow) => this.toMentorSearchItem(mentorRow)),
+    );
+    return mentorSearchItems;
   }
 
   private async toMentorSearchItem(
