@@ -16,7 +16,11 @@ export class DomainsService {
       where: { isActive: true },
       order: { position: 'ASC', name: 'ASC' },
     });
-    const domainResponses = activeDomains.map(({ id, name }) => ({ id, name }));
+    const domainResponses = activeDomains.map(({ id, slug, name }) => ({
+      id,
+      slug,
+      name,
+    }));
     return domainResponses;
   }
 
