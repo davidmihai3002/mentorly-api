@@ -6,7 +6,7 @@ import { Domain } from './entities/index.js';
 
 const DOMAIN_ID = '5a8c2e1f-4b7d-4e9a-8c3f-6d1e2b4a7c90';
 
-const domainResponse = { id: DOMAIN_ID, name: 'Marketing' };
+const domainResponse = { id: DOMAIN_ID, slug: 'marketing', name: 'Marketing' };
 
 describe('DomainsService', () => {
   const domainsRepository = {
@@ -27,7 +27,7 @@ describe('DomainsService', () => {
     domainsService = testingModule.get(DomainsService);
   });
 
-  it('returns only the id and name of the active domains, ordered by position then name', async () => {
+  it('returns only the id, slug and name of the active domains, ordered by position then name', async () => {
     const storedDomain = { ...domainResponse, position: 2, isActive: true };
     domainsRepository.find.mockResolvedValueOnce([
       Object.assign(new Domain(), storedDomain),

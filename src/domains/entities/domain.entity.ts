@@ -5,6 +5,9 @@ export class Domain {
   @PrimaryGeneratedColumn('uuid', { name: 'id' })
   id: string;
 
+  @Column({ name: 'slug', type: 'text', nullable: false })
+  slug: string;
+
   @Column({ name: 'name', type: 'text', nullable: false })
   name: string;
 
