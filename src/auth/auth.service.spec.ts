@@ -1,6 +1,7 @@
 import {
   ConflictException,
   ForbiddenException,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -8,9 +9,19 @@ import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { compare, getRounds, hash, hashSync } from 'bcryptjs';
 import { DataSource, IsNull, type Repository } from 'typeorm';
-import { MenteeProfile, USER_ROLE, User } from '../users/index.js';
+import {
+  AUTH_PROVIDER,
+  MenteeProfile,
+  USER_ROLE,
+  User,
+  UserAuthProvider,
+} from '../users/index.js';
 import { AuthService } from './auth.service.js';
-import type { LoginDto, RegisterDto } from './dto/index.js';
+import type { GoogleRegisterDto, LoginDto, RegisterDto } from './dto/index.js';
+import {
+  GoogleIdentityService,
+  type GoogleIdentity,
+} from './google-identity.service.js';
 
 vi.mock(import('bcryptjs'), { spy: true });
 
@@ -51,6 +62,48 @@ const credentials = {
   password: ANA_PASSWORD,
 } satisfies LoginDto;
 
+const GOOGLE_ID_TOKEN = 'google-id-token-value';
+const GOOGLE_USER_ID = '109876543210987654321';
+const AUTH_PROVIDER_ID = '4a2c6e8b-1d3f-4b5a-9e7c-2f4d6b8a0c1e';
+const EMAIL_VERIFIED_AT = new Date('2026-10-01T08:00:00.000Z');
+const GOOGLE_ACCOUNT_NOT_FOUND = new NotFoundException(
+  'No account is linked to this Google account yet.',
+);
+
+const googleIdentity = {
+  googleUserId: GOOGLE_USER_ID,
+  email: 'ana.pop@example.com',
+  firstName: 'Ana',
+  lastName: 'Pop',
+} satisfies GoogleIdentity;
+
+const googleSignUp = {
+  idToken: GOOGLE_ID_TOKEN,
+  role: USER_ROLE.MENTEE,
+  birthDate: '2001-03-15',
+  hasAcceptedTerms: true,
+} satisfies GoogleRegisterDto;
+
+const linkedGoogleProvider = Object.assign(new UserAuthProvider(), {
+  id: AUTH_PROVIDER_ID,
+  userId: USER_ID,
+  provider: AUTH_PROVIDER.GOOGLE,
+  providerUserId: GOOGLE_USER_ID,
+  providerEmail: 'ana.pop@example.com',
+});
+
+const googleProviderRowFor = (
+  userId: string,
+): Pick<
+  UserAuthProvider,
+  'userId' | 'provider' | 'providerUserId' | 'providerEmail'
+> => ({
+  userId,
+  provider: AUTH_PROVIDER.GOOGLE,
+  providerUserId: GOOGLE_USER_ID,
+  providerEmail: 'ana.pop@example.com',
+});
+
 const buildUser = (changes: Partial<User> = {}): User =>
   Object.assign(new User(), {
     id: USER_ID,
@@ -62,6 +115,7 @@ const buildUser = (changes: Partial<User> = {}): User =>
     birthDate: '2001-03-15',
     avatarFileId: null,
     termsAcceptedAt: SIGN_UP_TIME,
+    emailVerifiedAt: null,
     tokenVersion: 4,
     lastLoginAt: null,
     deletedAt: null,
@@ -81,13 +135,21 @@ describe('AuthService', () => {
         }),
       }),
     }),
+    update: vi.fn<Repository<User>['update']>(),
   };
   const profilesRepository = {
     insert: vi.fn((profile: MenteeProfile) => Promise.resolve(profile)),
   };
+  const authProvidersRepository = {
+    insert: vi.fn<Repository<UserAuthProvider>['insert']>(),
+  };
+  const repositoryByEntity = new Map<unknown, object>([
+    [User, usersRepository],
+    [MenteeProfile, profilesRepository],
+    [UserAuthProvider, authProvidersRepository],
+  ]);
   const manager = {
-    getRepository: (entity: unknown) =>
-      entity === MenteeProfile ? profilesRepository : usersRepository,
+    getRepository: (entity: unknown) => repositoryByEntity.get(entity),
   };
   const dataSource = {
     transaction: vi.fn(
@@ -98,6 +160,12 @@ describe('AuthService', () => {
     findOneBy: vi.fn<Repository<User>['findOneBy']>(),
     update: vi.fn<Repository<User>['update']>(),
     increment: vi.fn<Repository<User>['increment']>(),
+  };
+  const injectedAuthProvidersRepository = {
+    findOneBy: vi.fn<Repository<UserAuthProvider>['findOneBy']>(),
+  };
+  const googleIdentityService = {
+    verifyIdToken: vi.fn<GoogleIdentityService['verifyIdToken']>(),
   };
   const jwtService = new JwtService({
     secret: TEST_JWT_SECRET,
@@ -118,7 +186,12 @@ describe('AuthService', () => {
           provide: getRepositoryToken(User),
           useValue: injectedUsersRepository,
         },
+        {
+          provide: getRepositoryToken(UserAuthProvider),
+          useValue: injectedAuthProvidersRepository,
+        },
         { provide: JwtService, useValue: jwtService },
+        { provide: GoogleIdentityService, useValue: googleIdentityService },
       ],
     }).compile();
 
@@ -298,6 +371,236 @@ describe('AuthService', () => {
           { expiresIn: THIRTY_DAYS_IN_SECONDS },
         ],
       ]);
+    });
+  });
+
+  describe('googleLogin', () => {
+    beforeEach(() => {
+      googleIdentityService.verifyIdToken.mockResolvedValue(googleIdentity);
+    });
+
+    it('logs in through the linked Google identity, updating only last_login_at and returning a session', async () => {
+      injectedAuthProvidersRepository.findOneBy.mockResolvedValue(
+        linkedGoogleProvider,
+      );
+      injectedUsersRepository.findOneBy.mockResolvedValue(buildUser());
+
+      const session = await authService.googleLogin(GOOGLE_ID_TOKEN);
+
+      expect(session).toStrictEqual({
+        accessToken: await signAsync.mock.results[0].value,
+        refreshToken: await signAsync.mock.results[1].value,
+        user: {
+          id: USER_ID,
+          email: 'ana.pop@example.com',
+          role: USER_ROLE.MENTOR,
+          firstName: 'Ana',
+          lastName: 'Pop',
+        },
+      });
+      expect(
+        googleIdentityService.verifyIdToken,
+      ).toHaveBeenCalledExactlyOnceWith(GOOGLE_ID_TOKEN);
+      expect(
+        injectedAuthProvidersRepository.findOneBy.mock.calls,
+      ).toStrictEqual([
+        [{ provider: AUTH_PROVIDER.GOOGLE, providerUserId: GOOGLE_USER_ID }],
+      ]);
+      expect(injectedUsersRepository.findOneBy.mock.calls).toStrictEqual([
+        [{ id: USER_ID, deletedAt: IsNull() }],
+      ]);
+      expect(injectedUsersRepository.update.mock.calls).toEqual([
+        [{ id: USER_ID }, { lastLoginAt: SIGN_UP_TIME }],
+      ]);
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(signAsync.mock.calls).toStrictEqual([
+        [{ sub: USER_ID, tokenVersion: 4, tokenType: 'ACCESS' }],
+        [
+          { sub: USER_ID, tokenVersion: 4, tokenType: 'REFRESH' },
+          { expiresIn: THIRTY_DAYS_IN_SECONDS },
+        ],
+      ]);
+    });
+
+    it('does not log in a deleted user whose Google identity is linked, looking up only users without deleted_at', async () => {
+      injectedAuthProvidersRepository.findOneBy.mockResolvedValue(
+        linkedGoogleProvider,
+      );
+      injectedUsersRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(authService.googleLogin(GOOGLE_ID_TOKEN)).rejects.toThrow(
+        GOOGLE_ACCOUNT_NOT_FOUND,
+      );
+      expect(injectedUsersRepository.findOneBy.mock.calls).toStrictEqual([
+        [{ id: USER_ID, deletedAt: IsNull() }],
+        [{ email: 'ana.pop@example.com', deletedAt: IsNull() }],
+      ]);
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(injectedUsersRepository.update).not.toHaveBeenCalled();
+      expect(signAsync).not.toHaveBeenCalled();
+    });
+
+    it('links an account whose email was never verified in one transaction, removing the password, bumping token_version and verifying the email, then signs the session with the new token version', async () => {
+      injectedAuthProvidersRepository.findOneBy.mockResolvedValue(null);
+      injectedUsersRepository.findOneBy.mockResolvedValue(
+        buildUser({ emailVerifiedAt: null }),
+      );
+
+      const session = await authService.googleLogin(GOOGLE_ID_TOKEN);
+
+      expect(dataSource.transaction).toHaveBeenCalledOnce();
+      expect(authProvidersRepository.insert.mock.calls).toStrictEqual([
+        [googleProviderRowFor(USER_ID)],
+      ]);
+      expect(usersRepository.update.mock.calls).toEqual([
+        [
+          { id: USER_ID },
+          {
+            passwordHash: null,
+            tokenVersion: 5,
+            emailVerifiedAt: SIGN_UP_TIME,
+          },
+        ],
+      ]);
+      expect(injectedUsersRepository.findOneBy.mock.calls).toStrictEqual([
+        [{ email: 'ana.pop@example.com', deletedAt: IsNull() }],
+      ]);
+      expect(injectedUsersRepository.update.mock.calls).toEqual([
+        [{ id: USER_ID }, { lastLoginAt: SIGN_UP_TIME }],
+      ]);
+      expect(signAsync.mock.calls).toStrictEqual([
+        [{ sub: USER_ID, tokenVersion: 5, tokenType: 'ACCESS' }],
+        [
+          { sub: USER_ID, tokenVersion: 5, tokenType: 'REFRESH' },
+          { expiresIn: THIRTY_DAYS_IN_SECONDS },
+        ],
+      ]);
+      expect(session.user).toStrictEqual({
+        id: USER_ID,
+        email: 'ana.pop@example.com',
+        role: USER_ROLE.MENTOR,
+        firstName: 'Ana',
+        lastName: 'Pop',
+      });
+    });
+
+    it('links an account with a verified email by adding only the provider row, keeping the password and the token version', async () => {
+      injectedAuthProvidersRepository.findOneBy.mockResolvedValue(null);
+      injectedUsersRepository.findOneBy.mockResolvedValue(
+        buildUser({ emailVerifiedAt: EMAIL_VERIFIED_AT }),
+      );
+
+      await authService.googleLogin(GOOGLE_ID_TOKEN);
+
+      expect(dataSource.transaction).toHaveBeenCalledOnce();
+      expect(authProvidersRepository.insert.mock.calls).toStrictEqual([
+        [googleProviderRowFor(USER_ID)],
+      ]);
+      expect(usersRepository.update).not.toHaveBeenCalled();
+      expect(injectedUsersRepository.update.mock.calls).toEqual([
+        [{ id: USER_ID }, { lastLoginAt: SIGN_UP_TIME }],
+      ]);
+      expect(signAsync.mock.calls).toStrictEqual([
+        [{ sub: USER_ID, tokenVersion: 4, tokenType: 'ACCESS' }],
+        [
+          { sub: USER_ID, tokenVersion: 4, tokenType: 'REFRESH' },
+          { expiresIn: THIRTY_DAYS_IN_SECONDS },
+        ],
+      ]);
+    });
+
+    it('rejects with 404 and writes nothing when no account has this Google identity or email', async () => {
+      injectedAuthProvidersRepository.findOneBy.mockResolvedValue(null);
+      injectedUsersRepository.findOneBy.mockResolvedValue(null);
+
+      await expect(authService.googleLogin(GOOGLE_ID_TOKEN)).rejects.toThrow(
+        GOOGLE_ACCOUNT_NOT_FOUND,
+      );
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+      expect(authProvidersRepository.insert).not.toHaveBeenCalled();
+      expect(injectedUsersRepository.update).not.toHaveBeenCalled();
+      expect(signAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('googleRegister', () => {
+    beforeEach(() => {
+      googleIdentityService.verifyIdToken.mockResolvedValue(googleIdentity);
+    });
+
+    it.each([{ role: USER_ROLE.MENTEE }, { role: USER_ROLE.MENTOR }])(
+      'rejects a $role Google sign-up with 403 when the user turns 16 tomorrow, without verifying the token or opening a transaction',
+      async ({ role }) => {
+        const underageSignUp = {
+          ...googleSignUp,
+          role,
+          birthDate: TURNS_16_DAY_AFTER_SIGN_UP,
+        };
+
+        await expect(
+          authService.googleRegister(underageSignUp),
+        ).rejects.toThrow(UNDER_MINIMUM_AGE_ERROR);
+        expect(googleIdentityService.verifyIdToken).not.toHaveBeenCalled();
+        expect(dataSource.transaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { role: USER_ROLE.MENTEE, profileInserts: [[{ userId: NEW_USER_ID }]] },
+      { role: USER_ROLE.MENTOR, profileInserts: [] },
+    ])(
+      'signs up a $role with Google in one transaction: no password, a verified email, the Google names, a mentee profile only for a mentee, the provider row and a session',
+      async ({ role, profileInserts }) => {
+        const session = await authService.googleRegister({
+          ...googleSignUp,
+          role,
+        });
+
+        const [storedUser] = insertUser.mock.calls[0];
+        expect(storedUser).toEqual(
+          Object.assign(new User(), {
+            id: NEW_USER_ID,
+            email: 'ana.pop@example.com',
+            passwordHash: null,
+            role,
+            firstName: 'Ana',
+            lastName: 'Pop',
+            birthDate: '2001-03-15',
+            termsAcceptedAt: SIGN_UP_TIME,
+            emailVerifiedAt: SIGN_UP_TIME,
+            tokenVersion: 0,
+          }),
+        );
+        expect(
+          googleIdentityService.verifyIdToken,
+        ).toHaveBeenCalledExactlyOnceWith(GOOGLE_ID_TOKEN);
+        expect(dataSource.transaction).toHaveBeenCalledOnce();
+        expect(profilesRepository.insert.mock.calls).toEqual(profileInserts);
+        expect(authProvidersRepository.insert.mock.calls).toStrictEqual([
+          [googleProviderRowFor(NEW_USER_ID)],
+        ]);
+        expect(session).toStrictEqual({
+          accessToken: await signAsync.mock.results[0].value,
+          refreshToken: await signAsync.mock.results[1].value,
+          user: {
+            id: NEW_USER_ID,
+            email: 'ana.pop@example.com',
+            role,
+            firstName: 'Ana',
+            lastName: 'Pop',
+          },
+        });
+      },
+    );
+
+    it('rejects a Google sign-up with 409 when the email is already registered, without a provider row', async () => {
+      insertUser.mockImplementationOnce((user) => Promise.resolve(user));
+
+      await expect(authService.googleRegister(googleSignUp)).rejects.toThrow(
+        new ConflictException('An account with this email already exists.'),
+      );
+      expect(authProvidersRepository.insert).not.toHaveBeenCalled();
+      expect(profilesRepository.insert).not.toHaveBeenCalled();
     });
   });
 

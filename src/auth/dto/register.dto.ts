@@ -1,37 +1,18 @@
 import { Transform } from 'class-transformer';
-import {
-  Equals,
-  IsByteLength,
-  IsEmail,
-  IsEnum,
-  IsISO8601,
-  Matches,
-  MinLength,
-  ValidateBy,
-} from 'class-validator';
+import { IsByteLength, IsEmail, Matches, MinLength } from 'class-validator';
 import {
   SINGLE_LINE_TEXT_MESSAGE,
   SINGLE_LINE_TEXT_PATTERN,
   trimText,
 } from '../../common/index.js';
-import { USER_ROLE, type UserRole } from '../../users/index.js';
 import { toNormalizedEmail } from '../utils/index.js';
+import { SignUpBaseDto } from './sign-up-base.dto.js';
 
 const PASSWORD_MIN_LENGTH = 8;
 const BCRYPT_MAX_PASSWORD_BYTES = 72;
 const CONTAINS_LETTER_AND_DIGIT = /^(?=.*\p{L})(?=.*\d)/su;
-const ISO_DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
-const isPastDate = (value: unknown): boolean => {
-  const [today] = new Date().toISOString().split('T');
-  const isBeforeToday = typeof value === 'string' && value < today;
-  return isBeforeToday;
-};
-
-export class RegisterDto {
-  @IsEnum(USER_ROLE)
-  role: UserRole;
-
+export class RegisterDto extends SignUpBaseDto {
   @Transform(trimText)
   @Matches(SINGLE_LINE_TEXT_PATTERN, { message: SINGLE_LINE_TEXT_MESSAGE })
   firstName: string;
@@ -52,15 +33,4 @@ export class RegisterDto {
     message: 'password must contain a letter and a digit',
   })
   password: string;
-
-  @Matches(ISO_DATE_ONLY, { message: 'birthDate must be in YYYY-MM-DD format' })
-  @IsISO8601({ strict: true }, { message: 'birthDate must be a valid date' })
-  @ValidateBy(
-    { name: 'isPastDate', validator: { validate: isPastDate } },
-    { message: 'birthDate must be a date in the past' },
-  )
-  birthDate: string;
-
-  @Equals(true)
-  hasAcceptedTerms: boolean;
 }

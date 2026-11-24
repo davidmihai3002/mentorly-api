@@ -8,10 +8,17 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import type { AuthSession } from './auth-session.interface.js';
 import { AuthService } from './auth.service.js';
 import type { AuthenticatedUser } from './authenticated-request.interface.js';
 import { CurrentUser } from './current-user.decorator.js';
-import { LoginDto, RegisterDto, type LoginResponseDto } from './dto/index.js';
+import {
+  GoogleLoginDto,
+  GoogleRegisterDto,
+  LoginDto,
+  RegisterDto,
+  type LoginResponseDto,
+} from './dto/index.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import {
   REFRESH_TOKEN_COOKIE,
@@ -28,14 +35,9 @@ export class AuthController {
     @Body() signUp: RegisterDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<LoginResponseDto> {
-    const { accessToken, refreshToken, user } =
-      await this.authService.register(signUp);
-    response.cookie(
-      REFRESH_TOKEN_COOKIE,
-      refreshToken,
-      REFRESH_TOKEN_COOKIE_OPTIONS,
-    );
-    return { accessToken, user };
+    const session = await this.authService.register(signUp);
+    const loginResponse = this.respondWithSession(session, response);
+    return loginResponse;
   }
 
   @Post('login')
@@ -44,14 +46,30 @@ export class AuthController {
     @Body() credentials: LoginDto,
     @Res({ passthrough: true }) response: Response,
   ): Promise<LoginResponseDto> {
-    const { accessToken, refreshToken, user } =
-      await this.authService.login(credentials);
-    response.cookie(
-      REFRESH_TOKEN_COOKIE,
-      refreshToken,
-      REFRESH_TOKEN_COOKIE_OPTIONS,
-    );
-    return { accessToken, user };
+    const session = await this.authService.login(credentials);
+    const loginResponse = this.respondWithSession(session, response);
+    return loginResponse;
+  }
+
+  @Post('google/register')
+  async googleRegister(
+    @Body() signUp: GoogleRegisterDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<LoginResponseDto> {
+    const session = await this.authService.googleRegister(signUp);
+    const loginResponse = this.respondWithSession(session, response);
+    return loginResponse;
+  }
+
+  @Post('google/login')
+  @HttpCode(HttpStatus.OK)
+  async googleLogin(
+    @Body() googleLogin: GoogleLoginDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<LoginResponseDto> {
+    const session = await this.authService.googleLogin(googleLogin.idToken);
+    const loginResponse = this.respondWithSession(session, response);
+    return loginResponse;
   }
 
   @Post('refresh')
@@ -72,5 +90,17 @@ export class AuthController {
   ): Promise<void> {
     await this.authService.logout(currentUser.id);
     response.clearCookie(REFRESH_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE_OPTIONS);
+  }
+
+  private respondWithSession(
+    { accessToken, refreshToken, user }: AuthSession,
+    response: Response,
+  ): LoginResponseDto {
+    response.cookie(
+      REFRESH_TOKEN_COOKIE,
+      refreshToken,
+      REFRESH_TOKEN_COOKIE_OPTIONS,
+    );
+    return { accessToken, user };
   }
 }
